@@ -18,11 +18,14 @@ The parser expects the guest check-in export layout used in the provided sample:
 - Column B: Room number
 - Column C: Room type
 - Column D: Room rate
+- Column E: Booking source (`WLKIN` = Walk-in, `XPDIA` = Online Booking)
 - Column F: Guest name
 - Column K: Check-in date
 - Column L: Check-in time
 - Column M: Check-out date
 - Column N: Number of nights
+
+The website ledger expands every stay across all occupied nights. The check-in/payment row is yellow; subsequent already-paid nights are blue and show `PAID` instead of repeating the amounts. These audit colours and labels are website-only. Generated PDFs retain the official layouts: Lampiran C records each booking once on its check-in date, with the full number of nights and corresponding fee, so totals are not duplicated.
 
 ## Deploy to Vercel
 
