@@ -19,7 +19,7 @@ from docx.shared import Cm, Pt, RGBColor
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="public", static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 
 
@@ -340,26 +340,90 @@ def index() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fi Kelestarian Report Generator</title>
+  <title>KL Guest Hotel Fulfilment</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <main>
-    <section class="panel">
-      <h1>Fi Kelestarian Report Generator</h1>
-      <form action="/generate" method="post" enctype="multipart/form-data">
-        <label>Guest check-in Excel (.xls or .xlsx)<input name="guest_file" type="file" accept=".xls,.xlsx" required></label>
-        <div class="grid">
-          <label>Nama Premis Penginapan<input name="premise_name" placeholder="Hotel / premis"></label>
-          <label>No. Lesen Perniagaan (PBT)<input name="license_no"></label>
-          <label>No. Siri Sijil<input name="certificate_no"></label>
-          <label>Kod Kategori Premis<input name="category_code" placeholder="Hotel 1-3 bintang"></label>
-          <label>Wakil Untuk Dihubungi<input name="contact_name"></label>
-          <label>No. Telefon / Emel<input name="contact"></label>
-          <label>Fi per bilik/malam (RM)<input name="fee_rate" type="number" step="0.01" min="0" value="5.00"></label>
+  <main class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">KL</span>
+        <div>
+          <strong>Guest Hotel</strong>
+          <span>Fi Kelestarian Fulfilment</span>
         </div>
-        <label>Alamat Premis Penginapan<textarea name="address" rows="3"></textarea></label>
-        <button type="submit">Generate DOCX Reports</button>
+      </div>
+      <nav>
+        <a class="active" href="#">Report Fulfilment</a>
+        <a href="#">Guest Uploads</a>
+        <a href="#">Document Archive</a>
+        <a href="#">Settings</a>
+      </nav>
+    </aside>
+    <section class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Monthly compliance workflow</p>
+          <h1>Generate Lampiran B & C</h1>
+        </div>
+        <div class="status-pill">Ready for upload</div>
+      </header>
+
+      <section class="metrics" aria-label="Workflow summary">
+        <article>
+          <span>Input</span>
+          <strong>Guest check-in list</strong>
+        </article>
+        <article>
+          <span>Output</span>
+          <strong>2 DOCX reports</strong>
+        </article>
+        <article>
+          <span>Default fee</span>
+          <strong>RM5 / night</strong>
+        </article>
+      </section>
+
+      <form class="fulfilment-board" action="/generate" method="post" enctype="multipart/form-data">
+        <section class="card upload-card">
+          <div>
+            <p class="section-label">Step 1</p>
+            <h2>Upload guest list</h2>
+          </div>
+          <label class="dropzone">
+            <span>Choose guest check-in Excel</span>
+            <small>.xls or .xlsx export from the hotel system</small>
+            <input name="guest_file" type="file" accept=".xls,.xlsx" required>
+          </label>
+          <div class="hint-row">
+            <span>Reads room, guest, check-in date, checkout date, and nights.</span>
+          </div>
+        </section>
+
+        <section class="card details-card">
+          <div>
+            <p class="section-label">Step 2</p>
+            <h2>Premise details</h2>
+          </div>
+          <div class="grid">
+            <label>Nama Premis Penginapan<input name="premise_name" placeholder="Hotel / premis"></label>
+            <label>No. Lesen Perniagaan (PBT)<input name="license_no" placeholder="MBPJ-0000"></label>
+            <label>No. Siri Sijil<input name="certificate_no" placeholder="Sijil"></label>
+            <label>Kod Kategori Premis<input name="category_code" placeholder="Hotel 1-3 bintang"></label>
+            <label>Wakil Untuk Dihubungi<input name="contact_name" placeholder="Nama wakil"></label>
+            <label>No. Telefon / Emel<input name="contact" placeholder="Telefon atau emel"></label>
+            <label>Fi per bilik/malam (RM)<input name="fee_rate" type="number" step="0.01" min="0" value="5.00"></label>
+          </div>
+          <label>Alamat Premis Penginapan<textarea name="address" rows="3" placeholder="Alamat penuh premis"></textarea></label>
+        </section>
+
+        <section class="action-strip">
+          <div>
+            <strong>Fulfilment package</strong>
+            <span>Creates a ZIP with Lampiran B monthly summary and Lampiran C daily transactions.</span>
+          </div>
+          <button type="submit">Generate reports</button>
+        </section>
       </form>
     </section>
   </main>
