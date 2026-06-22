@@ -18,6 +18,12 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt, RGBColor
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 app = Flask(__name__, static_folder="public", static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
@@ -329,6 +335,247 @@ def build_form_c(stays: list[GuestStay], form: dict[str, str], fee_rate: Decimal
     return out.getvalue()
 
 
+def pdf_styles():
+    styles = getSampleStyleSheet()
+    styles.add(
+        ParagraphStyle(
+            name="ReportTitle",
+            parent=styles["Title"],
+            alignment=TA_CENTER,
+            fontName="Helvetica-Bold",
+            fontSize=14,
+            leading=17,
+            textColor=colors.HexColor("#1F4E79"),
+            spaceAfter=4,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ReportSubTitle",
+            parent=styles["Normal"],
+            alignment=TA_CENTER,
+            fontName="Helvetica-Bold",
+            fontSize=10,
+            leading=13,
+            spaceAfter=12,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="Small",
+            parent=styles["Normal"],
+            alignment=TA_LEFT,
+            fontName="Helvetica",
+            fontSize=8,
+            leading=10,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SmallBold",
+            parent=styles["Small"],
+            fontName="Helvetica-Bold",
+        )
+    )
+    return styles
+
+
+def as_para(value: str, style) -> Paragraph:
+    return Paragraph(escape(str(value)), style)
+
+
+def build_info_pdf_table(fields: list[tuple[str, str]], styles) -> Table:
+    data = []
+    for i in range(0, len(fields), 2):
+        row = []
+        for label, value in fields[i : i + 2]:
+            row.extend([as_para(label, styles["SmallBold"]), as_para(value, styles["Small"])])
+        while len(row) < 4:
+            row.append("")
+        data.append(row)
+    table = Table(data, colWidths=[3.25 * cm, 5.0 * cm, 3.25 * cm, 5.0 * cm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B7C3D0")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F2F6FA")),
+                ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#F2F6FA")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return table
+
+
+def build_pdf_document(story: list) -> bytes:
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(
+        out,
+        pagesize=A4,
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm,
+    )
+    doc.build(story)
+    return out.getvalue()
+
+
+def add_pdf_confirmation(story: list, styles, total_label: str, total_amount: Decimal) -> None:
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("PENGESAHAN OLEH PENGUSAHA PREMIS PENGINAPAN", styles["SmallBold"]))
+    story.append(
+        Paragraph(
+            "Saya mengesahkan bahawa maklumat ini adalah BENAR dan TEPAT berdasarkan rekod kutipan SEBENAR bagi tempoh yang dilaporkan.",
+            styles["Small"],
+        )
+    )
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(f"{total_label} (RM): {money(total_amount)}", styles["Small"]))
+    story.append(Paragraph(f"Tarikh: {datetime.now().strftime('%d/%m/%Y')}", styles["Small"]))
+    story.append(Spacer(1, 28))
+    story.append(Paragraph("................................................", styles["Small"]))
+    story.append(Paragraph("Cop Rasmi & Tandatangan:", styles["Small"]))
+
+
+def build_form_b_pdf(stays: list[GuestStay], form: dict[str, str], fee_rate: Decimal) -> bytes:
+    styles = pdf_styles()
+    story: list = [
+        Paragraph("LAPORAN PENYATA KUTIPAN FI KELESTARIAN NEGERI SELANGOR", styles["ReportTitle"]),
+        Paragraph("(BULANAN)", styles["ReportSubTitle"]),
+    ]
+
+    first_day = min(stay.checkin_date for stay in stays)
+    month_label = first_day.strftime("%B %Y")
+    daily: dict[date, list[GuestStay]] = defaultdict(list)
+    for stay in stays:
+        daily[stay.checkin_date].append(stay)
+
+    story.append(
+        build_info_pdf_table(
+            [
+                ("Nama Premis Penginapan", form.get("premise_name", "")),
+                ("No. Lesen Perniagaan (PBT)", form.get("license_no", "")),
+                ("No. Siri Sijil", form.get("certificate_no", "")),
+                ("Kod Kategori Premis", form.get("category_code", "")),
+                ("Alamat Premis Penginapan", form.get("address", "")),
+                ("Bulan & Tahun Pelaporan", month_label),
+                ("Wakil Untuk Dihubungi", form.get("contact_name", "")),
+                ("No. Telefon / Emel", form.get("contact", "")),
+            ],
+            styles,
+        )
+    )
+    story.append(Spacer(1, 12))
+
+    rows = [["Tarikh", "Jumlah Bilik (Unit)", "Bilangan Malam", "Jumlah Kutipan (RM)"]]
+    total_rooms = 0
+    total_nights = 0
+    total_fee = Decimal("0")
+    for day in sorted(daily.keys()):
+        day_stays = daily[day]
+        rooms = len(day_stays)
+        nights = sum(stay.nights for stay in day_stays)
+        fee = Decimal(nights) * fee_rate
+        total_rooms += rooms
+        total_nights += nights
+        total_fee += fee
+        rows.append([day.strftime("%d/%m/%Y"), str(rooms), str(nights), money(fee)])
+    rows.append(["Jumlah", str(total_rooms), str(total_nights), money(total_fee)])
+
+    table = Table(rows, repeatRows=1, colWidths=[4.3 * cm, 4.3 * cm, 4.3 * cm, 4.3 * cm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#8EA4BA")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9EAF7")),
+                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2F0D9")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    story.append(table)
+    add_pdf_confirmation(story, styles, "Jumlah Kutipan Bulanan", total_fee)
+    return build_pdf_document(story)
+
+
+def build_form_c_pdf(stays: list[GuestStay], form: dict[str, str], fee_rate: Decimal) -> bytes:
+    styles = pdf_styles()
+    story: list = []
+    grouped: dict[date, list[GuestStay]] = defaultdict(list)
+    for stay in stays:
+        grouped[stay.checkin_date].append(stay)
+
+    for page_idx, day in enumerate(sorted(grouped.keys())):
+        if page_idx:
+            story.append(PageBreak())
+        day_stays = grouped[day]
+        day_fee = sum(Decimal(stay.nights) * fee_rate for stay in day_stays)
+        story.extend(
+            [
+                Paragraph("LAPORAN TRANSAKSI PENGGUNAAN BILIK", styles["ReportTitle"]),
+                Paragraph("(HARIAN)", styles["ReportSubTitle"]),
+                build_info_pdf_table(
+                    [
+                        ("Nama Premis Penginapan", form.get("premise_name", "")),
+                        ("No. Rujukan Lesen (PBT)", form.get("license_no", "")),
+                        ("No. Siri Sijil", form.get("certificate_no", "")),
+                        ("Tarikh Hari Daftar Masuk", day.strftime("%d/%m/%Y")),
+                    ],
+                    styles,
+                ),
+                Spacer(1, 10),
+            ]
+        )
+
+        rows = [["Bil.", "Nama", "No. Bilik", "Jumlah Bilik (Unit)", "Bilangan Malam", "Jumlah Fi Kelestarian (RM)"]]
+        for idx, stay in enumerate(day_stays, start=1):
+            rows.append(
+                [
+                    str(idx),
+                    as_para(stay.guest_name, styles["Small"]),
+                    stay.room_no,
+                    "1",
+                    str(stay.nights),
+                    money(Decimal(stay.nights) * fee_rate),
+                ]
+            )
+        rows.append(["", "Jumlah Keseluruhan", "", str(len(day_stays)), str(sum(stay.nights for stay in day_stays)), money(day_fee)])
+
+        table = Table(rows, repeatRows=1, colWidths=[1.0 * cm, 6.2 * cm, 2.0 * cm, 2.7 * cm, 2.4 * cm, 3.0 * cm])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#8EA4BA")),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9EAF7")),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2F0D9")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("ALIGN", (1, 1), (1, -2), "LEFT"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story.append(table)
+        add_pdf_confirmation(story, styles, "Jumlah Kutipan Harian", day_fee)
+
+    return build_pdf_document(story)
+
+
 def safe_filename(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", text).strip("-") or "report"
 
@@ -376,7 +623,7 @@ def index() -> str:
         </article>
         <article>
           <span>Output</span>
-          <strong>2 DOCX reports</strong>
+          <strong>2 PDF reports</strong>
         </article>
         <article>
           <span>Default fee</span>
@@ -420,9 +667,9 @@ def index() -> str:
         <section class="action-strip">
           <div>
             <strong>Fulfilment package</strong>
-            <span>Creates a ZIP with Lampiran B monthly summary and Lampiran C daily transactions.</span>
+            <span>Creates a ZIP with Lampiran B monthly summary PDF and Lampiran C daily transactions PDF.</span>
           </div>
-          <button type="submit">Generate reports</button>
+          <button type="submit">Generate PDFs</button>
         </section>
       </form>
     </section>
@@ -441,15 +688,15 @@ def generate() -> Response:
         fee_rate = parse_decimal(request.form.get("fee_rate", "5.00"))
         stays = parse_guest_stays(upload.filename, upload.read())
         form = {key: escape(request.form.get(key, "").strip()) for key in request.form.keys()}
-        form_b = build_form_b(stays, form, fee_rate)
-        form_c = build_form_c(stays, form, fee_rate)
+        form_b = build_form_b_pdf(stays, form, fee_rate)
+        form_c = build_form_c_pdf(stays, form, fee_rate)
 
         first_day = min(stay.checkin_date for stay in stays)
         suffix = safe_filename(first_day.strftime("%Y-%m"))
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
-            bundle.writestr(f"Lampiran-B-Fi-Kelestarian-{suffix}.docx", form_b)
-            bundle.writestr(f"Lampiran-C-Transaksi-Bilik-Harian-{suffix}.docx", form_c)
+            bundle.writestr(f"Lampiran-B-Fi-Kelestarian-{suffix}.pdf", form_b)
+            bundle.writestr(f"Lampiran-C-Transaksi-Bilik-Harian-{suffix}.pdf", form_c)
         zip_buffer.seek(0)
         return Response(
             zip_buffer.getvalue(),
