@@ -1,2 +1,423 @@
-import base64, gzip
-exec(compile(gzip.decompress(base64.b64decode("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")).decode("utf-8"), "app.py", "exec"))
+from __future__ import annotations
+
+import io
+import json
+import re
+import zipfile
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from html import escape
+
+from flask import Flask, Response, jsonify, request
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+
+
+@dataclass
+class Stay:
+    voucher: str
+    room_no: str
+    room_type: str
+    rate: Decimal
+    guest_name: str
+    checkin_date: date
+    checkin_time: str
+    checkout_date: date | None
+    nights: int
+
+
+def clean(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def dec(value) -> Decimal:
+    try:
+        return Decimal(clean(value).replace(",", "") or "0")
+    except Exception:
+        return Decimal("0")
+
+
+def num(value, default=0) -> int:
+    try:
+        return int(dec(value))
+    except Exception:
+        return default
+
+
+def date_value(value, datemode=None) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, (int, float)) and datemode is not None:
+        import xlrd
+
+        try:
+            return xlrd.xldate_as_datetime(value, datemode).date()
+        except Exception:
+            return None
+    text = clean(value)
+    if not text:
+        return None
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def money(value) -> str:
+    amount = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{amount:,.2f}"
+
+
+def excel_rows(filename: str, data: bytes):
+    lower = filename.lower()
+    if lower.endswith(".xls"):
+        import xlrd
+
+        book = xlrd.open_workbook(file_contents=data)
+        for sheet in book.sheets():
+            for row_idx in range(sheet.nrows):
+                yield [sheet.cell_value(row_idx, col) for col in range(sheet.ncols)], book.datemode
+        return
+    if lower.endswith(".xlsx"):
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        for sheet in workbook.worksheets:
+            for row in sheet.iter_rows(values_only=True):
+                yield list(row), None
+        return
+    raise ValueError("Please upload an .xls or .xlsx file.")
+
+
+def parse_stays(filename: str, data: bytes) -> list[Stay]:
+    stays = []
+    for row, datemode in excel_rows(filename, data):
+        if len(row) < 14:
+            continue
+        checkin = date_value(row[10], datemode)
+        voucher = clean(row[0])
+        if not voucher or not checkin:
+            continue
+        stays.append(
+            Stay(
+                voucher=voucher,
+                room_no=clean(row[1]),
+                room_type=clean(row[2]),
+                rate=dec(row[3]),
+                guest_name=clean(row[5]),
+                checkin_date=checkin,
+                checkin_time=clean(row[11]),
+                checkout_date=date_value(row[12], datemode),
+                nights=max(num(row[13], 1), 1),
+            )
+        )
+    if not stays:
+        raise ValueError("No guest rows were found. Check that the file is the hotel check-in export.")
+    return sorted(stays, key=lambda s: (s.checkin_date, s.room_no, s.guest_name))
+
+
+def stay_record(stay: Stay) -> dict:
+    return {
+        "voucher": stay.voucher,
+        "room_no": stay.room_no,
+        "room_type": stay.room_type,
+        "rate": str(stay.rate),
+        "guest_name": stay.guest_name,
+        "checkin_date": stay.checkin_date.isoformat(),
+        "checkin_time": stay.checkin_time,
+        "checkout_date": stay.checkout_date.isoformat() if stay.checkout_date else "",
+        "nights": stay.nights,
+    }
+
+
+def records_to_stays(records: list[dict]) -> list[Stay]:
+    stays = []
+    for item in records:
+        checkin = date_value(item.get("checkin_date"))
+        if not checkin:
+            continue
+        stays.append(
+            Stay(
+                voucher=clean(item.get("voucher")),
+                room_no=clean(item.get("room_no")),
+                room_type=clean(item.get("room_type")),
+                rate=dec(item.get("rate")),
+                guest_name=clean(item.get("guest_name")),
+                checkin_date=checkin,
+                checkin_time=clean(item.get("checkin_time")),
+                checkout_date=date_value(item.get("checkout_date")),
+                nights=max(num(item.get("nights"), 1), 1),
+            )
+        )
+    if not stays:
+        raise ValueError("No imported stays found. Please import the Excel file again.")
+    return sorted(stays, key=lambda s: (s.checkin_date, s.room_no, s.guest_name))
+
+
+def expanded_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
+    rows = []
+    for stay in stays:
+        for offset in range(stay.nights):
+            day = stay.checkin_date + timedelta(days=offset)
+            rows.append(
+                {
+                    "date": day.isoformat(),
+                    "display_date": day.strftime("%d/%m/%Y"),
+                    "room_no": stay.room_no,
+                    "guest_name": stay.guest_name,
+                    "stay_progress": f"{offset + 1}/{stay.nights}",
+                    "nights": stay.nights,
+                    "multi_night": stay.nights > 1,
+                    "price": money(stay.rate),
+                    "kelestarian": money(fee_rate),
+                    "voucher": stay.voucher,
+                }
+            )
+    return sorted(rows, key=lambda r: (r["date"], r["room_no"], r["guest_name"]))
+
+
+def summary(stays: list[Stay], fee_rate: Decimal) -> dict:
+    sales = expanded_sales(stays, fee_rate)
+    total_fee = Decimal(len(sales)) * fee_rate
+    total_sales = sum((s.rate for s in stays), Decimal("0"))
+    days = sorted({row["date"] for row in sales})
+    return {
+        "stays": len(stays),
+        "sale_rows": len(sales),
+        "days": len(days),
+        "first_date": days[0] if days else "",
+        "last_date": days[-1] if days else "",
+        "total_sales": money(total_sales),
+        "total_kelestarian": money(total_fee),
+    }
+
+
+def styles():
+    s = getSampleStyleSheet()
+    s.add(ParagraphStyle(name="TitleBlue", parent=s["Title"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=14, leading=17, textColor=colors.HexColor("#1F4E79"), spaceAfter=4))
+    s.add(ParagraphStyle(name="SubTitle", parent=s["Normal"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=10, leading=13, spaceAfter=12))
+    s.add(ParagraphStyle(name="Small", parent=s["Normal"], alignment=TA_LEFT, fontName="Helvetica", fontSize=8, leading=10))
+    s.add(ParagraphStyle(name="SmallBold", parent=s["Small"], fontName="Helvetica-Bold"))
+    return s
+
+
+def p(text, style):
+    return Paragraph(escape(str(text)), style)
+
+
+def info_table(fields, s):
+    rows = []
+    for i in range(0, len(fields), 2):
+        row = []
+        for label, value in fields[i : i + 2]:
+            row += [p(label, s["SmallBold"]), p(value, s["Small"])]
+        while len(row) < 4:
+            row.append("")
+        rows.append(row)
+    table = Table(rows, colWidths=[3.25 * cm, 5.0 * cm, 3.25 * cm, 5.0 * cm])
+    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B7C3D0")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F2F6FA")), ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#F2F6FA")), ("PADDING", (0, 0), (-1, -1), 5)]))
+    return table
+
+
+def build_pdf(story, page_size=A4):
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(out, pagesize=page_size, leftMargin=1.2 * cm, rightMargin=1.2 * cm, topMargin=1.2 * cm, bottomMargin=1.2 * cm)
+    doc.build(story)
+    return out.getvalue()
+
+
+def form_fields(settings, month_label="", date_label=""):
+    return [
+        ("Nama Premis Penginapan", settings.get("premise_name", "")),
+        ("No. Lesen Perniagaan (PBT)", settings.get("license_no", "")),
+        ("No. Siri Sijil", settings.get("certificate_no", "")),
+        ("Kod Kategori Premis", settings.get("category_code", "")),
+        ("Alamat Premis Penginapan", settings.get("address", "")),
+        ("Bulan & Tahun Pelaporan" if month_label else "Tarikh Hari Daftar Masuk", month_label or date_label),
+        ("Wakil Untuk Dihubungi", settings.get("contact_name", "")),
+        ("No. Telefon / Emel", settings.get("contact", "")),
+    ]
+
+
+def confirmation(story, s, label, amount):
+    story += [Spacer(1, 10), p("PENGESAHAN OLEH PENGUSAHA PREMIS PENGINAPAN", s["SmallBold"]), p("Saya mengesahkan bahawa maklumat ini adalah BENAR dan TEPAT berdasarkan rekod kutipan SEBENAR bagi tempoh yang dilaporkan.", s["Small"]), Spacer(1, 8), p(f"{label} (RM): {money(amount)}", s["Small"]), p(f"Tarikh: {datetime.now().strftime('%d/%m/%Y')}", s["Small"]), Spacer(1, 28), p("................................................", s["Small"]), p("Cop Rasmi & Tandatangan:", s["Small"])]
+
+
+def form_b_pdf(stays: list[Stay], settings: dict, fee_rate: Decimal) -> bytes:
+    s = styles()
+    first_day = min(stay.checkin_date for stay in stays)
+    grouped = defaultdict(list)
+    for row in expanded_sales(stays, fee_rate):
+        grouped[row["display_date"]].append(row)
+    story = [p("LAPORAN PENYATA KUTIPAN FI KELESTARIAN NEGERI SELANGOR", s["TitleBlue"]), p("(BULANAN)", s["SubTitle"]), info_table(form_fields(settings, month_label=first_day.strftime("%B %Y")), s), Spacer(1, 12)]
+    rows = [["Tarikh", "Jumlah Bilik (Unit)", "Bilangan Malam", "Jumlah Kutipan (RM)"]]
+    total_rooms = total_nights = 0
+    total_fee = Decimal("0")
+    for day in sorted(grouped.keys(), key=lambda d: datetime.strptime(d, "%d/%m/%Y")):
+        rooms = len(grouped[day])
+        fee = Decimal(rooms) * fee_rate
+        total_rooms += rooms
+        total_nights += rooms
+        total_fee += fee
+        rows.append([day, str(rooms), str(rooms), money(fee)])
+    rows.append(["Jumlah", str(total_rooms), str(total_nights), money(total_fee)])
+    table = Table(rows, repeatRows=1, colWidths=[4.3 * cm, 4.3 * cm, 4.3 * cm, 4.3 * cm])
+    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#8EA4BA")), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9EAF7")), ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2F0D9")), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("PADDING", (0, 0), (-1, -1), 5)]))
+    story.append(table)
+    confirmation(story, s, "Jumlah Kutipan Bulanan", total_fee)
+    return build_pdf(story)
+
+
+def form_c_pdf(stays: list[Stay], settings: dict, fee_rate: Decimal) -> bytes:
+    s = styles()
+    grouped = defaultdict(list)
+    for row in expanded_sales(stays, fee_rate):
+        grouped[row["display_date"]].append(row)
+    story = []
+    for idx, day in enumerate(sorted(grouped.keys(), key=lambda d: datetime.strptime(d, "%d/%m/%Y"))):
+        if idx:
+            story.append(PageBreak())
+        rows_for_day = grouped[day]
+        day_fee = Decimal(len(rows_for_day)) * fee_rate
+        story += [p("LAPORAN TRANSAKSI PENGGUNAAN BILIK", s["TitleBlue"]), p("(HARIAN)", s["SubTitle"]), info_table(form_fields(settings, date_label=day), s), Spacer(1, 10)]
+        rows = [["Bil.", "Nama", "No. Bilik", "Tinggal", "Harga Dibayar (RM)", "Fi Kelestarian (RM)"]]
+        for row_no, item in enumerate(rows_for_day, 1):
+            rows.append([str(row_no), p(item["guest_name"], s["Small"]), item["room_no"], item["stay_progress"], item["price"], item["kelestarian"]])
+        rows.append(["", "Jumlah Keseluruhan", "", "", "", money(day_fee)])
+        table = Table(rows, repeatRows=1, colWidths=[1.0 * cm, 7.0 * cm, 2.0 * cm, 2.2 * cm, 3.0 * cm, 3.0 * cm])
+        table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#8EA4BA")), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9EAF7")), ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2F0D9")), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("ALIGN", (1, 1), (1, -2), "LEFT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("PADDING", (0, 0), (-1, -1), 4)]))
+        story.append(table)
+        confirmation(story, s, "Jumlah Kutipan Harian", day_fee)
+    return build_pdf(story, page_size=landscape(A4))
+
+
+PAGE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KL Guest Hotel Sales</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:#f2f6fb;color:#071a36}*{box-sizing:border-box}body{margin:0}.app{min-height:100vh;display:grid;grid-template-columns:278px 1fr}.sidebar{background:#12233b;color:#fff;padding:28px 18px;display:flex;flex-direction:column}.brand{display:flex;gap:14px;align-items:center;margin-bottom:30px}.logo{width:48px;height:48px;border-radius:9px;background:#fff;color:#0d3265;display:grid;place-items:center;font-weight:900}.brand span{display:block;color:#b5cae8;font-size:13px}.nav-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8aa6c8;font-weight:900}.nav{display:grid;gap:8px;margin-top:12px}.nav button{background:transparent;color:#b8d0ee;text-align:left;border:0;padding:14px;border-radius:8px;font-size:17px;cursor:pointer}.nav button.active{background:#1d3a60;color:#fff}.account{border-top:1px solid #314966;margin-top:auto;padding-top:28px;display:flex;gap:12px;align-items:center}.avatar{width:42px;height:42px;border-radius:999px;background:#3478d4;display:grid;place-items:center;font-weight:900}.main{padding:28px 34px 42px}.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px}.eyebrow{margin:0 0 8px;color:#7587a0;text-transform:uppercase;letter-spacing:.14em;font-size:13px;font-weight:900}h1{font-size:32px;margin:0}h2{font-size:20px;margin:0}.badge{background:#e8f1fd;color:#1c5a9d;border-radius:999px;padding:9px 16px;font-weight:900;font-size:13px}.notice{background:#e8f2ff;border:1px solid #bdd6fb;color:#0b4f9a;border-radius:9px;padding:16px 18px;margin-bottom:18px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.metric,.panel{background:#fff;border:1px solid #d7e0eb;border-radius:10px;box-shadow:0 8px 24px rgba(10,31,68,.04)}.metric{padding:16px}.metric span{display:block;color:#71839c;font-size:13px}.metric strong{display:block;margin-top:4px;font-size:22px}.panel{padding:22px;margin-bottom:18px}.drop{height:118px;border:1.5px dashed #9cb9dc;border-radius:9px;background:#f8fbff;display:grid;place-items:center;text-align:center;color:#1b5fab;font-weight:900;cursor:pointer}.drop.drag{background:#e8f2ff;border-color:#1b5fab}.drop small{display:block;color:#71839c;font-weight:600;margin-top:5px}.drop input{display:none}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:14px 0}.toolbar input{max-width:320px}.settings-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}label{display:grid;gap:7px;font-size:13px;font-weight:800;color:#2f4360}input{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;font:inherit}button.primary{border:0;border-radius:8px;background:#10233e;color:#fff;font-weight:900;padding:12px 18px;cursor:pointer}button.primary:disabled{opacity:.45;cursor:not-allowed}.view{display:none}.view.active{display:block}.table-wrap{overflow:auto;border:1px solid #dde6f1;border-radius:8px;background:#fff}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:left;white-space:nowrap}th{background:#f5f8fc;color:#516985;font-size:12px;text-transform:uppercase;letter-spacing:.05em}.day-row td{background:#edf4fc;color:#153a63;font-weight:900;font-size:14px}.multi td{background:#fff7dd}.empty{color:#71839c;padding:22px;border:1px dashed #c9d8ea;border-radius:8px;background:#f9fbfe}.report-grid{display:grid;grid-template-columns:1fr;gap:18px}.wide{grid-column:span 2}@media(max-width:1050px){.app{grid-template-columns:1fr}.sidebar{display:none}.cards,.settings-grid{grid-template-columns:1fr}.main{padding:20px}.top{flex-direction:column;gap:12px}}
+</style>
+</head>
+<body>
+<main class="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">KL</div><div><strong>KL Guest Hotel</strong><span>Sales & Lampiran</span></div></div>
+    <div class="nav-label">Workspace</div>
+    <nav class="nav">
+      <button data-view="dashboard" class="active">Dashboard</button>
+      <button data-view="b">Laporan B</button>
+      <button data-view="c">Laporan C</button>
+      <button data-view="settings">Settings</button>
+    </nav>
+    <div class="account"><div class="avatar">A</div><div><strong>Admin</strong><br><span style="color:#a6bddb">@admin</span></div></div>
+  </aside>
+  <section class="main">
+    <header class="top"><div><p class="eyebrow">Sales Tracking Workspace</p><h1 id="pageTitle">Dashboard</h1></div><div class="badge">ADMIN</div></header>
+    <section class="notice" id="notice">Drag in the hotel Excel file. The dashboard will remember every check-in and expand multi-night stays by day.</section>
+    <section class="cards">
+      <article class="metric"><span>Imported stays</span><strong id="mStays">0</strong></article>
+      <article class="metric"><span>Sales rows</span><strong id="mRows">0</strong></article>
+      <article class="metric"><span>Total sales</span><strong id="mSales">RM 0.00</strong></article>
+      <article class="metric"><span>Kelestarian</span><strong id="mFee">RM 0.00</strong></article>
+    </section>
+    <section class="panel">
+      <label class="drop" id="drop"><span id="dropText">Choose or drop guest check-in Excel<small>.xls or .xlsx</small></span><input id="file" type="file" accept=".xls,.xlsx"></label>
+    </section>
+    <section id="dashboard" class="view active">
+      <div class="panel"><div class="toolbar"><h2>Daily sales ledger</h2><input id="search" placeholder="Search guest or room"></div><div id="ledger" class="empty">No imported check-ins yet.</div></div>
+    </section>
+    <section id="b" class="view">
+      <div class="panel"><div class="toolbar"><h2>Laporan B preview</h2><button class="primary" id="downloadB" disabled>Download PDF</button></div><div id="previewB" class="empty">Import Excel first.</div></div>
+    </section>
+    <section id="c" class="view">
+      <div class="panel"><div class="toolbar"><h2>Laporan C preview</h2><button class="primary" id="downloadC" disabled>Download PDF</button></div><div id="previewC" class="empty">Import Excel first.</div></div>
+    </section>
+    <section id="settings" class="view">
+      <div class="panel"><h2>Reporting settings</h2><br><div class="settings-grid">
+        <label>Nama Premis Penginapan<input name="premise_name" class="setting" placeholder="KL Guest Hotel"></label>
+        <label>No. Lesen Perniagaan (PBT)<input name="license_no" class="setting" placeholder="MBPJ-0000"></label>
+        <label>No. Siri Sijil<input name="certificate_no" class="setting"></label>
+        <label>Kod Kategori Premis<input name="category_code" class="setting" placeholder="Hotel 1-3 bintang"></label>
+        <label>Wakil Untuk Dihubungi<input name="contact_name" class="setting"></label>
+        <label>No. Telefon / Emel<input name="contact" class="setting"></label>
+        <label>Fi per bilik/malam (RM)<input name="fee_rate" class="setting" type="number" step="0.01" value="5.00"></label>
+        <label class="wide">Alamat Premis Penginapan<input name="address" class="setting"></label>
+      </div></div>
+    </section>
+  </section>
+</main>
+<script>
+let stays=JSON.parse(localStorage.getItem("stays")||"[]");
+let sales=JSON.parse(localStorage.getItem("sales")||"[]");
+let summary=JSON.parse(localStorage.getItem("summary")||"{}");
+const q=s=>document.querySelector(s), qa=s=>[...document.querySelectorAll(s)];
+function settings(){let o={};qa(".setting").forEach(i=>o[i.name]=i.value);return o}
+function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Stay</th><th>Price Paid</th><th>Kelestarian</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="5">${cur}</td></tr>`}html+=`<tr class="${r.multi_night?'multi':''}"><td>${r.room_no}</td><td>${r.guest_name}</td><td>${r.stay_progress}</td><td>RM ${r.price}</td><td>RM ${r.kelestarian}</td></tr>`});return html+'</tbody></table></div>'}
+function table(rows,heads,mapper){return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+rows.map(mapper).join('')+'</tbody></table></div>'}
+function render(){q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=summary.sale_rows||0;q("#mSales").textContent='RM '+(summary.total_sales||'0.00');q("#mFee").textContent='RM '+(summary.total_kelestarian||'0.00');q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;let term=q("#search").value.toLowerCase();let filtered=sales.filter(r=>(r.guest_name+' '+r.room_no).toLowerCase().includes(term));q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No imported check-ins yet.';let byDay={};sales.forEach(r=>{byDay[r.display_date]??={rooms:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].fee+=Number(r.kelestarian.replace(/,/g,''))});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Jumlah Bilik','Bilangan Malam','Jumlah Kutipan'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.rooms}</td><td>RM ${r.fee.toFixed(2)}</td></tr>`):'Import Excel first.';q("#previewC").className=sales.length?'':'empty';q("#previewC").innerHTML=sales.length?groupRows(sales):'Import Excel first.'}
+async function importFile(file){q("#dropText").innerHTML=file.name+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Imported ${summary.stays} stays and expanded them into ${summary.sale_rows} daily sales rows.`;q("#dropText").innerHTML=file.name+'<small>Imported</small>';render()}
+async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=kind==='b'?'laporan-b.pdf':'laporan-c.pdf';a.click();URL.revokeObjectURL(url)}
+qa(".nav button").forEach(b=>b.onclick=()=>{qa(".nav button").forEach(x=>x.classList.remove('active'));b.classList.add('active');qa(".view").forEach(v=>v.classList.remove('active'));q("#"+b.dataset.view).classList.add('active');q("#pageTitle").textContent=b.textContent});
+q("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);q("#search").oninput=render;q("#downloadB").onclick=()=>download('b');q("#downloadC").onclick=()=>download('c');
+let drop=q("#drop");['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])importFile(e.dataTransfer.files[0])});
+qa(".setting").forEach(i=>{i.value=localStorage.getItem('set_'+i.name)||i.value;i.oninput=()=>localStorage.setItem('set_'+i.name,i.value)});
+render();
+</script>
+</body>
+</html>"""
+
+
+@app.get("/")
+def index():
+    return PAGE
+
+
+@app.post("/api/import")
+def api_import():
+    upload = request.files.get("file")
+    if not upload:
+        return jsonify({"error": "Please upload an Excel file."}), 400
+    try:
+        fee_rate = Decimal("5.00")
+        stays = parse_stays(upload.filename, upload.read())
+        return jsonify({"stays": [stay_record(s) for s in stays], "sales": expanded_sales(stays, fee_rate), "summary": summary(stays, fee_rate)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/report")
+def api_report():
+    try:
+        kind = request.form.get("kind", "b")
+        stays = records_to_stays(json.loads(request.form.get("stays", "[]")))
+        fee_rate = dec(request.form.get("fee_rate", "5.00"))
+        settings = {k: escape(request.form.get(k, "").strip()) for k in request.form.keys()}
+        pdf = form_b_pdf(stays, settings, fee_rate) if kind == "b" else form_c_pdf(stays, settings, fee_rate)
+        name = "laporan-b.pdf" if kind == "b" else "laporan-c.pdf"
+        return Response(pdf, mimetype="application/pdf", headers={"Content-Disposition": f"attachment; filename={name}"})
+    except Exception as exc:
+        return Response(str(exc), status=400)
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
