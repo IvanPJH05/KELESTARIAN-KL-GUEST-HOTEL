@@ -210,6 +210,7 @@ def expanded_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
             day = stay.checkin_date + timedelta(days=offset)
             payment_collected = offset == 0
             full_fee = fee_rate * stay.nights
+            row_state = "single" if stay.nights == 1 else "payment" if payment_collected else "paid"
             rows.append(
                 {
                     "date": day.isoformat(),
@@ -222,7 +223,8 @@ def expanded_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
                     "nights": stay.nights,
                     "multi_night": stay.nights > 1,
                     "payment_collected": payment_collected,
-                    "row_state": "payment" if payment_collected else "paid",
+                    "row_state": row_state,
+                    "row_class": "" if row_state == "single" else f"{row_state}-row",
                     "price": money(stay.rate) if payment_collected else "PAID",
                     "kelestarian": money(full_fee) if payment_collected else "PAID",
                     "actual_price": money(stay.rate) if payment_collected else "0.00",
@@ -601,7 +603,7 @@ let summary=JSON.parse(localStorage.getItem("summary")||"{}");
 const q=s=>document.querySelector(s), qa=s=>[...document.querySelectorAll(s)];
 function settings(){let o={};qa(".setting").forEach(i=>o[i.name]=i.value);return o}
 function amount(v){return v==='PAID'?'PAID':'RM '+v}
-function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Customer Type</th><th>Stay</th><th>Price Paid</th><th>Kelestarian</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="6">${cur}</td></tr>`}html+=`<tr class="${r.payment_collected?'payment-row':'paid-row'}"><td>${r.room_no}</td><td>${r.guest_name}</td><td>${r.customer_type}</td><td>${r.stay_progress}</td><td>${amount(r.price)}</td><td>${amount(r.kelestarian)}</td></tr>`});return html+'</tbody></table></div>'}
+function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Customer Type</th><th>Stay</th><th>Price Paid</th><th>Kelestarian</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="6">${cur}</td></tr>`}html+=`<tr class="${r.row_class}"><td>${r.room_no}</td><td>${r.guest_name}</td><td>${r.customer_type}</td><td>${r.stay_progress}</td><td>${amount(r.price)}</td><td>${amount(r.kelestarian)}</td></tr>`});return html+'</tbody></table></div>'}
 function table(rows,heads,mapper){return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+rows.map(mapper).join('')+'</tbody></table></div>'}
 function render(){q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=summary.sale_rows||0;q("#mSales").textContent='RM '+(summary.total_sales||'0.00');q("#mFee").textContent='RM '+(summary.total_kelestarian||'0.00');q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;let term=q("#search").value.toLowerCase();let filtered=sales.filter(r=>(r.guest_name+' '+r.customer_type+' '+r.room_no).toLowerCase().includes(term));q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No imported check-ins yet.';let byDay={};sales.filter(r=>r.payment_collected).forEach(r=>{byDay[r.display_date]??={rooms:0,nights:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].nights+=Number(r.nights);byDay[r.display_date].fee+=Number(r.actual_kelestarian.replace(/,/g,''))});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Jumlah Bilik','Bilangan Malam','Jumlah Kutipan'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.nights}</td><td>RM ${r.fee.toFixed(2)}</td></tr>`):'Import Excel first.';q("#previewC").className=sales.length?'':'empty';q("#previewC").innerHTML=sales.length?groupRows(sales):'Import Excel first.'}
 async function importFile(file){q("#dropText").innerHTML=file.name+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Imported ${summary.stays} stays and expanded them into ${summary.sale_rows} daily sales rows.`;q("#dropText").innerHTML=file.name+'<small>Imported</small>';render()}
