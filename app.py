@@ -255,12 +255,12 @@ def report_filename(kind: str, stays: list[Stay]) -> str:
     checkin_dates = sorted({stay.checkin_date for stay in stays})
     if kind == "b":
         months = sorted({(day.year, day.month) for day in checkin_dates})
-        labels = [f"{month_name[month]}-{year}" for year, month in months]
-        period = labels[0] if len(labels) == 1 else f"{labels[0]}-to-{labels[-1]}"
-        return f"Lampiran-B-{period}.pdf"
-    labels = [day.strftime("%d-%m-%Y") for day in checkin_dates]
-    period = labels[0] if len(labels) == 1 else f"{labels[0]}-to-{labels[-1]}"
-    return f"Lampiran-C-{period}.pdf"
+        labels = [f"{month_name[month]} {year}" for year, month in months]
+        period = labels[0] if len(labels) == 1 else f"{labels[0]} to {labels[-1]}"
+        return f"Lampiran B {period}.pdf"
+    labels = [f"{day.day:02d} {month_name[day.month]} {day.year}" for day in checkin_dates]
+    period = labels[0] if len(labels) == 1 else f"{labels[0]} to {labels[-1]}"
+    return f"Lampiran C {period}.pdf"
 
 
 CREST_PATH = os.path.join(os.path.dirname(__file__), "assets", "selangor-crest.jpeg")
@@ -619,7 +619,7 @@ function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th
 function table(rows,heads,mapper){return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+rows.map(mapper).join('')+'</tbody></table></div>'}
 function render(){q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=summary.sale_rows||0;q("#mSales").textContent='RM '+(summary.total_sales||'0.00');q("#mFee").textContent='RM '+(summary.total_kelestarian||'0.00');q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;let term=q("#search").value.toLowerCase();let filtered=sales.filter(r=>(r.guest_name+' '+r.customer_type+' '+r.room_no).toLowerCase().includes(term));q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No imported check-ins yet.';let byDay={};sales.filter(r=>r.payment_collected).forEach(r=>{byDay[r.display_date]??={rooms:0,nights:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].nights+=Number(r.nights);byDay[r.display_date].fee+=Number(r.actual_kelestarian.replace(/,/g,''))});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Jumlah Bilik','Bilangan Malam','Jumlah Kutipan'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.nights}</td><td>RM ${r.fee.toFixed(2)}</td></tr>`):'Import Excel first.';q("#previewC").className=sales.length?'':'empty';q("#previewC").innerHTML=sales.length?groupRows(sales):'Import Excel first.'}
 async function importFile(file){q("#dropText").innerHTML=file.name+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Imported ${summary.stays} stays and expanded them into ${summary.sale_rows} daily sales rows.`;q("#dropText").innerHTML=file.name+'<small>Imported</small>';render()}
-async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran-B.pdf':'Lampiran-C.pdf');a.click();URL.revokeObjectURL(url)}
+async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran B.pdf':'Lampiran C.pdf');a.click();URL.revokeObjectURL(url)}
 qa(".nav button").forEach(b=>b.onclick=()=>{qa(".nav button").forEach(x=>x.classList.remove('active'));b.classList.add('active');qa(".view").forEach(v=>v.classList.remove('active'));q("#"+b.dataset.view).classList.add('active');q("#pageTitle").textContent=b.textContent});
 q("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);q("#search").oninput=render;q("#downloadB").onclick=()=>download('b');q("#downloadC").onclick=()=>download('c');
 let drop=q("#drop");['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])importFile(e.dataTransfer.files[0])});
