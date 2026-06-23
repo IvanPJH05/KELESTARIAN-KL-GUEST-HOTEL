@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from app import Stay, expanded_sales, form_b_pdf, form_c_pdf, parse_stays, summary
+from app import PAGE, Stay, expanded_sales, form_b_pdf, form_c_pdf, parse_stays, summary
 
 
 FEE = Decimal("5.00")
@@ -69,6 +69,7 @@ def test_four_customer_and_stay_scenarios_do_not_duplicate_payments():
     totals = summary(scenarios(), FEE)
     assert totals["total_sales"] == "760.00"
     assert totals["total_kelestarian"] == "35.00"
+    assert "r.row_class??(r.multi_night?" in PAGE
 
 
 def test_official_layout_pdfs_have_expected_pages_and_totals():
