@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from app import PAGE, Stay, expanded_sales, form_b_pdf, form_c_pdf, parse_stays, summary
+from app import PAGE, Stay, expanded_sales, form_b_pdf, form_c_pdf, parse_stays, report_filename, summary
 
 
 FEE = Decimal("5.00")
@@ -88,6 +88,8 @@ def test_official_layout_pdfs_have_expected_pages_and_totals():
     assert "Bilangan Malam" in c_text
     assert "Online Booking" not in c_text
     assert "PAID" not in c_text
+    assert report_filename("b", scenarios()) == "Lampiran-B-June-2026.pdf"
+    assert report_filename("c", scenarios()) == "Lampiran-C-01-06-2026.pdf"
 
 
 def test_real_hotel_export_uses_column_e_and_strips_leading_numbers():
