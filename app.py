@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import zipfile
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -271,10 +272,11 @@ def expanded_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
     for stay in stays:
         if not stay.check_in_date or not stay.number_of_nights:
             continue
-        daily_paid = stay.amount_paid / Decimal(stay.number_of_nights)
-        daily_room_revenue = stay.tariff_before_tax / Decimal(stay.number_of_nights)
+        total_kelestarian = fee_rate * Decimal(stay.number_of_nights)
+        paid_date = stay.check_in_date.strftime("%d/%m/%Y")
         for offset in range(stay.number_of_nights):
             day = stay.check_in_date + timedelta(days=offset)
+            is_check_in_day = offset == 0
             rows.append(
                 {
                     "date": day.isoformat(),
@@ -284,10 +286,14 @@ def expanded_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
                     "stay_progress": f"{offset + 1}/{stay.number_of_nights}",
                     "nights": stay.number_of_nights,
                     "multi_night": stay.number_of_nights > 1,
-                    "price": money(daily_paid),
+                    "price": money(stay.amount_paid if is_check_in_day else Decimal("0")),
                     "total_paid": money(stay.amount_paid),
-                    "room_revenue": money(daily_room_revenue),
-                    "kelestarian": money(fee_rate),
+                    "amount_before_tax": money(stay.tariff_before_tax if is_check_in_day else Decimal("0")),
+                    "room_revenue": money(stay.tariff_before_tax if is_check_in_day else Decimal("0")),
+                    "kelestarian": money(total_kelestarian if is_check_in_day else Decimal("0")),
+                    "payment_status": "Collected" if is_check_in_day else f"Paid on {paid_date}",
+                    "paid_date": stay.check_in_date.isoformat(),
+                    "is_paid_continuation": not is_check_in_day,
                     "bill_no": stay.bill_no,
                     "payment_method": stay.payment_method,
                     "rate_type": stay.rate_type,
@@ -299,7 +305,7 @@ def expanded_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
 
 def summary(stays: list[Stay], fee_rate: Decimal) -> dict:
     sales = expanded_sales(stays, fee_rate)
-    total_fee = Decimal(len(sales)) * fee_rate
+    total_fee = sum((dec(row["kelestarian"]) for row in sales), Decimal("0"))
     total_sales = sum((s.total_amount for s in stays), Decimal("0"))
     days = sorted({row["date"] for row in sales})
     daily_revenue = defaultdict(lambda: {"rooms": 0, "total_amount": Decimal("0"), "kelestarian": Decimal("0")})
@@ -441,7 +447,7 @@ def form_b_pdf(stays: list[Stay], settings: dict, fee_rate: Decimal) -> bytes:
     total_fee = Decimal("0")
     for day in sorted(grouped.keys(), key=lambda d: datetime.strptime(d, "%d/%m/%Y")):
         rooms = len(grouped[day])
-        fee = Decimal(rooms) * fee_rate
+        fee = sum((dec(row["kelestarian"]) for row in grouped[day]), Decimal("0"))
         total_rooms += rooms
         total_nights += rooms
         total_fee += fee
@@ -464,27 +470,27 @@ def form_c_pdf(stays: list[Stay], settings: dict, fee_rate: Decimal) -> bytes:
         if idx:
             story.append(PageBreak())
         rows_for_day = grouped[day]
-        day_fee = Decimal(len(rows_for_day)) * fee_rate
+        day_fee = sum((dec(row["kelestarian"]) for row in rows_for_day), Decimal("0"))
         story += [p("LAPORAN TRANSAKSI PENGGUNAAN BILIK", s["TitleBlue"]), p("(HARIAN)", s["SubTitle"]), info_table(form_fields(settings, date_label=day), s), Spacer(1, 10)]
-        rows = [["Bil.", "Nama", "No. Bilik", "Tinggal", "Harga Dibayar (RM)", "Fi Kelestarian (RM)"]]
+        rows = [["Bil.", "Nama", "No. Bilik", "Tinggal", "Harga Dibayar (RM)", "Fi Kelestarian (RM)", "Status"]]
         for row_no, item in enumerate(rows_for_day, 1):
-            rows.append([str(row_no), p(item["guest_name"], s["Small"]), item["room_no"], item["stay_progress"], item["price"], item["kelestarian"]])
-        rows.append(["", "Jumlah Keseluruhan", "", "", "", money(day_fee)])
-        table = Table(rows, repeatRows=1, colWidths=[1.0 * cm, 7.0 * cm, 2.0 * cm, 2.2 * cm, 3.0 * cm, 3.0 * cm])
+            rows.append([str(row_no), p(item["guest_name"], s["Small"]), item["room_no"], item["stay_progress"], item["price"], item["kelestarian"], item["payment_status"]])
+        rows.append(["", "Jumlah Keseluruhan", "", "", "", money(day_fee), ""])
+        table = Table(rows, repeatRows=1, colWidths=[1.0 * cm, 6.0 * cm, 1.8 * cm, 1.8 * cm, 2.7 * cm, 2.7 * cm, 3.0 * cm])
         table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#8EA4BA")), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9EAF7")), ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2F0D9")), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("ALIGN", (1, 1), (1, -2), "LEFT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("PADDING", (0, 0), (-1, -1), 4)]))
         story.append(table)
         confirmation(story, s, "Jumlah Kutipan Harian", day_fee)
     return build_pdf(story, page_size=landscape(A4))
 
 
-PAGE = r'''<!doctype html>
+PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KL Guest Hotel Sales</title>
 <style>
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:#f2f6fb;color:#071a36}*{box-sizing:border-box}body{margin:0}.app{min-height:100vh;display:grid;grid-template-columns:278px 1fr}.sidebar{background:#12233b;color:#fff;padding:28px 18px;display:flex;flex-direction:column}.brand{display:flex;gap:14px;align-items:center;margin-bottom:30px}.logo{width:48px;height:48px;border-radius:9px;background:#fff;color:#0d3265;display:grid;place-items:center;font-weight:900}.brand span{display:block;color:#b5cae8;font-size:13px}.nav-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8aa6c8;font-weight:900}.nav{display:grid;gap:8px;margin-top:12px}.nav button{background:transparent;color:#b8d0ee;text-align:left;border:0;padding:14px;border-radius:8px;font-size:17px;cursor:pointer}.nav button.active{background:#1d3a60;color:#fff}.account{border-top:1px solid #314966;margin-top:auto;padding-top:28px;display:flex;gap:12px;align-items:center}.avatar{width:42px;height:42px;border-radius:999px;background:#3478d4;display:grid;place-items:center;font-weight:900}.main{padding:28px 34px 42px}.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px}.eyebrow{margin:0 0 8px;color:#7587a0;text-transform:uppercase;letter-spacing:.14em;font-size:13px;font-weight:900}h1{font-size:32px;margin:0}h2{font-size:20px;margin:0}.badge{background:#e8f1fd;color:#1c5a9d;border-radius:999px;padding:9px 16px;font-weight:900;font-size:13px}.notice{background:#e8f2ff;border:1px solid #bdd6fb;color:#0b4f9a;border-radius:9px;padding:16px 18px;margin-bottom:18px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.metric,.panel{background:#fff;border:1px solid #d7e0eb;border-radius:10px;box-shadow:0 8px 24px rgba(10,31,68,.04)}.metric{padding:16px}.metric span{display:block;color:#71839c;font-size:13px}.metric strong{display:block;margin-top:4px;font-size:22px}.panel{padding:22px;margin-bottom:18px}.drop{height:118px;border:1.5px dashed #9cb9dc;border-radius:9px;background:#f8fbff;display:grid;place-items:center;text-align:center;color:#1b5fab;font-weight:900;cursor:pointer}.drop.drag{background:#e8f2ff;border-color:#1b5fab}.drop small{display:block;color:#71839c;font-weight:600;margin-top:5px}.drop input{display:none}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:14px 0}.toolbar input{max-width:320px}.settings-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}label{display:grid;gap:7px;font-size:13px;font-weight:800;color:#2f4360}input{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;font:inherit}button.primary{border:0;border-radius:8px;background:#10233e;color:#fff;font-weight:900;padding:12px 18px;cursor:pointer}button.primary:disabled{opacity:.45;cursor:not-allowed}.view{display:none}.view.active{display:block}.table-wrap{overflow:auto;border:1px solid #dde6f1;border-radius:8px;background:#fff}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:left;white-space:nowrap}th{background:#f5f8fc;color:#516985;font-size:12px;text-transform:uppercase;letter-spacing:.05em}.day-row td{background:#edf4fc;color:#153a63;font-weight:900;font-size:14px}.multi td{background:#fff7dd}.empty{color:#71839c;padding:22px;border:1px dashed #c9d8ea;border-radius:8px;background:#f9fbfe}.report-grid{display:grid;grid-template-columns:1fr;gap:18px}.wide{grid-column:span 2}@media(max-width:1050px){.app{grid-template-columns:1fr}.sidebar{display:none}.cards,.settings-grid{grid-template-columns:1fr}.main{padding:20px}.top{flex-direction:column;gap:12px}}
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:#f2f6fb;color:#071a36}*{box-sizing:border-box}body{margin:0}.app{min-height:100vh;display:grid;grid-template-columns:278px 1fr}.sidebar{background:#12233b;color:#fff;padding:28px 18px;display:flex;flex-direction:column}.brand{display:flex;gap:14px;align-items:center;margin-bottom:30px}.logo{width:48px;height:48px;border-radius:9px;background:#fff;color:#0d3265;display:grid;place-items:center;font-weight:900}.brand span{display:block;color:#b5cae8;font-size:13px}.nav-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8aa6c8;font-weight:900}.nav{display:grid;gap:8px;margin-top:12px}.nav button{background:transparent;color:#b8d0ee;text-align:left;border:0;padding:14px;border-radius:8px;font-size:17px;cursor:pointer}.nav button.active{background:#1d3a60;color:#fff}.account{border-top:1px solid #314966;margin-top:auto;padding-top:28px;display:flex;gap:12px;align-items:center}.avatar{width:42px;height:42px;border-radius:999px;background:#3478d4;display:grid;place-items:center;font-weight:900}.main{padding:28px 34px 42px}.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px}.eyebrow{margin:0 0 8px;color:#7587a0;text-transform:uppercase;letter-spacing:.14em;font-size:13px;font-weight:900}h1{font-size:32px;margin:0}h2{font-size:20px;margin:0}.badge{background:#e8f1fd;color:#1c5a9d;border-radius:999px;padding:9px 16px;font-weight:900;font-size:13px}.notice{background:#e8f2ff;border:1px solid #bdd6fb;color:#0b4f9a;border-radius:9px;padding:16px 18px;margin-bottom:18px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.metric,.panel{background:#fff;border:1px solid #d7e0eb;border-radius:10px;box-shadow:0 8px 24px rgba(10,31,68,.04)}.metric{padding:16px}.metric span{display:block;color:#71839c;font-size:13px}.metric strong{display:block;margin-top:4px;font-size:22px}.panel{padding:22px;margin-bottom:18px}.drop{height:118px;border:1.5px dashed #9cb9dc;border-radius:9px;background:#f8fbff;display:grid;place-items:center;text-align:center;color:#1b5fab;font-weight:900;cursor:pointer}.drop.drag{background:#e8f2ff;border-color:#1b5fab}.drop small{display:block;color:#71839c;font-weight:600;margin-top:5px}.drop input{display:none}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:14px 0;flex-wrap:wrap}.toolbar input{max-width:320px}.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.filters button{border:1px solid #c7d7ea;background:#fff;color:#1a4f8d;border-radius:7px;padding:9px 12px;font-weight:900;cursor:pointer}.filters button.active{background:#1d5fa7;color:#fff;border-color:#1d5fa7}.filters input{width:150px}.settings-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}label{display:grid;gap:7px;font-size:13px;font-weight:800;color:#2f4360}input{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;font:inherit}button.primary{border:0;border-radius:8px;background:#10233e;color:#fff;font-weight:900;padding:12px 18px;cursor:pointer}button.primary:disabled{opacity:.45;cursor:not-allowed}.view{display:none}.view.active{display:block}.table-wrap{overflow:auto;border:1px solid #dde6f1;border-radius:8px;background:#fff}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:left;white-space:nowrap}th{background:#f5f8fc;color:#516985;font-size:12px;text-transform:uppercase;letter-spacing:.05em}.day-row td{background:#edf4fc;color:#153a63;font-weight:900;font-size:14px}.multi td{background:#fff7dd}.paid-continuation td{background:#eaf3ff;color:#174b85}.paid-pill{display:inline-block;background:#d8eaff;color:#18508d;border:1px solid #b6d5fb;border-radius:999px;padding:4px 9px;font-weight:900}.empty{color:#71839c;padding:22px;border:1px dashed #c9d8ea;border-radius:8px;background:#f9fbfe}.report-grid{display:grid;grid-template-columns:1fr;gap:18px}.wide{grid-column:span 2}@media(max-width:1050px){.app{grid-template-columns:1fr}.sidebar{display:none}.cards,.settings-grid{grid-template-columns:1fr}.main{padding:20px}.top{flex-direction:column;gap:12px}}
 </style>
 </head>
 <body>
@@ -513,7 +519,7 @@ PAGE = r'''<!doctype html>
         <label class="drop" id="drop"><span id="dropText">Choose or drop Sales Bill Register Excel<small>.xls or .xlsx</small></span><input id="file" type="file" accept=".xls,.xlsx"></label>
     </section>
     <section id="dashboard" class="view active">
-      <div class="panel"><div class="toolbar"><h2>Daily sales ledger</h2><input id="search" placeholder="Search guest or room"></div><div id="ledger" class="empty">No imported check-ins yet.</div></div>
+      <div class="panel"><div class="toolbar"><h2>Daily sales ledger</h2><input id="search" placeholder="Search guest or room"></div><div class="filters"><button data-range="today">Today</button><button data-range="last7">Last 7 days</button><button data-range="month" class="active">This month</button><button data-range="custom">Custom date</button><input id="startDate" type="date"><input id="endDate" type="date"></div><div id="ledger" class="empty">No imported check-ins yet.</div></div>
       <div class="panel"><h2>Sales reports</h2><br><div id="analytics" class="empty">Import Excel first.</div></div>
     </section>
     <section id="b" class="view">
@@ -540,21 +546,29 @@ PAGE = r'''<!doctype html>
 let stays=JSON.parse(localStorage.getItem("stays")||"[]");
 let sales=JSON.parse(localStorage.getItem("sales")||"[]");
 let summary=JSON.parse(localStorage.getItem("summary")||"{}");
+let rangeMode=localStorage.getItem("rangeMode")||"month";
 const q=s=>document.querySelector(s), qa=s=>[...document.querySelectorAll(s)];
 function settings(){let o={};qa(".setting").forEach(i=>o[i.name]=i.value);return o}
-function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Stay</th><th>Price Paid</th><th>Kelestarian</th><th>Payment</th><th>Rate Type</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="7">${cur}</td></tr>`}html+=`<tr class="${r.multi_night?'multi':''}"><td>${r.room_no||''}</td><td>${r.guest_name||''}</td><td>${r.stay_progress}</td><td>RM ${r.price}</td><td>RM ${r.kelestarian}</td><td>${r.payment_method||''}</td><td>${r.rate_type||''}</td></tr>`});return html+'</tbody></table></div>'}
+function asMoney(v){return Number(String(v||"0").replace(/,/g,""))||0}
+function iso(d){let z=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate())}
+function rangeBounds(){let now=new Date(),start=new Date(now),end=new Date(now);start.setHours(0,0,0,0);end.setHours(0,0,0,0);if(rangeMode==="last7"){start.setDate(start.getDate()-6)}else if(rangeMode==="month"){start=new Date(now.getFullYear(),now.getMonth(),1);end=new Date(now.getFullYear(),now.getMonth()+1,0)}else if(rangeMode==="custom"){let s=q("#startDate").value,e=q("#endDate").value;return {start:s||"0000-01-01",end:e||"9999-12-31"}}return {start:iso(start),end:iso(end)}}
+function visibleRows(){let bounds=rangeBounds(),term=q("#search").value.toLowerCase();return sales.filter(r=>r.date>=bounds.start&&r.date<=bounds.end).filter(r=>(String(r.guest_name||"")+" "+String(r.room_no||"")).toLowerCase().includes(term))}
+function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Stay</th><th>Amount Paid</th><th>Before Tax</th><th>Kelestarian</th><th>Status</th><th>Payment</th><th>Rate Type</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{let paid=r.is_paid_continuation?`<span class="paid-pill">${r.payment_status||("Paid on "+(r.display_date||""))}</span>`:`RM ${r.price||"0.00"}`;let before=r.is_paid_continuation?"":`RM ${r.amount_before_tax||r.room_revenue||"0.00"}`;let fee=r.is_paid_continuation?"":`RM ${r.kelestarian||"0.00"}`;if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="9">${cur}</td></tr>`}html+=`<tr class="${r.is_paid_continuation?'paid-continuation':(r.multi_night?'multi':'')}"><td>${r.room_no||''}</td><td>${r.guest_name||''}</td><td>${r.stay_progress||''}</td><td>${paid}</td><td>${before}</td><td>${fee}</td><td>${r.payment_status||'Collected'}</td><td>${r.payment_method||''}</td><td>${r.rate_type||''}</td></tr>`});return html+'</tbody></table></div>'}
 function table(rows,heads,mapper){return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+rows.map(mapper).join('')+'</tbody></table></div>'}
-function render(){q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=summary.sale_rows||0;q("#mSales").textContent='RM '+(summary.total_sales||'0.00');q("#mFee").textContent='RM '+(summary.total_kelestarian||'0.00');q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;let term=q("#search").value.toLowerCase();let filtered=sales.filter(r=>(r.guest_name+' '+r.room_no).toLowerCase().includes(term));q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No imported check-ins yet.';let byDay={};sales.forEach(r=>{byDay[r.display_date]??={rooms:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].fee+=Number(r.kelestarian.replace(/,/g,''))});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Jumlah Bilik','Bilangan Malam','Jumlah Kutipan'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.rooms}</td><td>RM ${r.fee.toFixed(2)}</td></tr>`):'Import Excel first.';q("#previewC").className=sales.length?'':'empty';q("#previewC").innerHTML=sales.length?groupRows(sales):'Import Excel first.';let analytics=q("#analytics");if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Revenue before tax</span><strong>RM '+summary.revenue_before_tax+'</strong></article><article class="metric"><span>Total tax collected</span><strong>RM '+summary.total_tax_collected+'</strong></article><article class="metric"><span>Average stay</span><strong>'+summary.average_length_of_stay+' nights</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div>'+table(summary.payment_method_breakdown,['Payment Method','Bills','Amount'],r=>`<tr><td>${r.payment_method}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`)+ '<br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
+function render(){qa(".filters button").forEach(b=>b.classList.toggle("active",b.dataset.range===rangeMode));let filtered=visibleRows();let visibleSales=filtered.reduce((t,r)=>t+asMoney(r.price),0),visibleFee=filtered.reduce((t,r)=>t+asMoney(r.kelestarian),0);q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=filtered.length;q("#mSales").textContent='RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#mFee").textContent='RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let byDay={};filtered.forEach(r=>{byDay[r.display_date]??={rooms:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].fee+=asMoney(r.kelestarian)});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Bilik Dipaparkan','Malam Dipaparkan','Kutipan Pada Hari Ini'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.rooms}</td><td>RM ${r.fee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'No rows in this date range.';q("#previewC").className=filtered.length?'':'empty';q("#previewC").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let analytics=q("#analytics");if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Revenue before tax</span><strong>RM '+summary.revenue_before_tax+'</strong></article><article class="metric"><span>Total tax collected</span><strong>RM '+summary.total_tax_collected+'</strong></article><article class="metric"><span>Average stay</span><strong>'+summary.average_length_of_stay+' nights</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div>'+table(summary.payment_method_breakdown,['Payment Method','Bills','Amount'],r=>`<tr><td>${r.payment_method}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`)+ '<br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
 async function importFile(file){q("#dropText").innerHTML=file.name+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Imported ${summary.stays} stays and expanded them into ${summary.sale_rows} daily sales rows.`;q("#dropText").innerHTML=file.name+'<small>Imported</small>';render()}
 async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=kind==='b'?'laporan-b.pdf':'laporan-c.pdf';a.click();URL.revokeObjectURL(url)}
 qa(".nav button").forEach(b=>b.onclick=()=>{qa(".nav button").forEach(x=>x.classList.remove('active'));b.classList.add('active');qa(".view").forEach(v=>v.classList.remove('active'));q("#"+b.dataset.view).classList.add('active');q("#pageTitle").textContent=b.textContent});
 q("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);q("#search").oninput=render;q("#downloadB").onclick=()=>download('b');q("#downloadC").onclick=()=>download('c');
+qa(".filters button").forEach(b=>b.onclick=()=>{rangeMode=b.dataset.range;localStorage.setItem("rangeMode",rangeMode);render()});
+q("#startDate").value=localStorage.getItem("startDate")||"";q("#endDate").value=localStorage.getItem("endDate")||"";
+["#startDate","#endDate"].forEach(id=>q(id).onchange=()=>{rangeMode="custom";localStorage.setItem("rangeMode",rangeMode);localStorage.setItem(id.slice(1),q(id).value);render()});
 let drop=q("#drop");['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])importFile(e.dataTransfer.files[0])});
 qa(".setting").forEach(i=>{i.value=localStorage.getItem('set_'+i.name)||i.value;i.oninput=()=>localStorage.setItem('set_'+i.name,i.value)});
 render();
 </script>
 </body>
-</html>'''
+</html>"""
 
 
 @app.get("/")
