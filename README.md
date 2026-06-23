@@ -18,13 +18,13 @@ The Supabase schema is in [supabase/schema.sql](supabase/schema.sql).
 The schema has already been applied to project:
 
 ```text
-joaoirpegnkexmktylop
+akvvxxaufvlprqusxxzq
 ```
 
 Add these Vercel environment variables:
 
 ```text
-SUPABASE_URL=https://joaoirpegnkexmktylop.supabase.co
+SUPABASE_URL=https://akvvxxaufvlprqusxxzq.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
