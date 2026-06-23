@@ -57,8 +57,11 @@ def test_four_customer_and_stay_scenarios_do_not_duplicate_payments():
     later_days = [row for row in sales if not row["payment_collected"]]
     assert len(first_days) == 4
     assert len(later_days) == 3
-    assert all(row["row_state"] == "payment" for row in first_days)
+    single_nights = [row for row in sales if not row["multi_night"]]
+    assert all(row["row_state"] == "single" and row["row_class"] == "" for row in single_nights)
+    assert all(row["row_state"] == "payment" and row["row_class"] == "payment-row" for row in first_days if row["multi_night"])
     assert all(row["row_state"] == "paid" for row in later_days)
+    assert all(row["row_class"] == "paid-row" for row in later_days)
     assert all(row["price"] == row["kelestarian"] == "PAID" for row in later_days)
     assert sum(Decimal(row["actual_price"]) for row in sales) == Decimal("760.00")
     assert sum(Decimal(row["actual_kelestarian"]) for row in sales) == Decimal("35.00")
