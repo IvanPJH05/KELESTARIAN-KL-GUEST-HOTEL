@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import zipfile
 from collections import defaultdict
@@ -9,6 +10,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from flask import Flask, Response, jsonify, request
 from reportlab.lib import colors
@@ -97,6 +101,36 @@ def date_value(value, datemode=None) -> date | None:
 def money(value) -> str:
     amount = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return f"{amount:,.2f}"
+
+
+def supabase_configured() -> bool:
+    return bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
+
+
+def supabase_request(method: str, table: str, payload=None, query: dict | None = None, prefer: str | None = None):
+    if not supabase_configured():
+        raise RuntimeError("Supabase is not configured.")
+    base = os.environ["SUPABASE_URL"].rstrip("/")
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    url = f"{base}/rest/v1/{table}"
+    if query:
+        url += "?" + urlencode(query)
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    req = Request(url, data=body, headers=headers, method=method)
+    try:
+        with urlopen(req, timeout=20) as response:
+            text = response.read().decode("utf-8")
+            return json.loads(text) if text else None
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", "ignore")
+        raise RuntimeError(f"Supabase request failed: {exc.code} {detail}") from exc
 
 
 def excel_rows(filename: str, data: bytes):
@@ -225,6 +259,54 @@ def stay_record(stay: Stay) -> dict:
         "payment_method": stay.payment_method,
         "flags": stay.flags,
     }
+
+
+def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict], summary_data: dict) -> bool:
+    if not supabase_configured():
+        return False
+    batch = supabase_request(
+        "POST",
+        "hotel_import_batches",
+        {
+            "source_filename": filename,
+            "stay_count": len(stays),
+            "sale_row_count": len(sales),
+            "total_sales": str(dec(summary_data.get("total_sales"))),
+            "total_kelestarian": str(dec(summary_data.get("total_kelestarian"))),
+        },
+        query={"select": "id"},
+        prefer="return=representation",
+    )
+    batch_id = batch[0]["id"] if batch else None
+    rows = []
+    for stay in stays:
+        row = stay_record(stay)
+        row["import_batch_id"] = batch_id
+        row["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        rows.append(row)
+    for index in range(0, len(rows), 500):
+        supabase_request(
+            "POST",
+            "guest_stays",
+            rows[index : index + 500],
+            query={"on_conflict": "bill_no"},
+            prefer="resolution=merge-duplicates",
+        )
+    return True
+
+
+def load_stays_from_supabase() -> list[dict]:
+    if not supabase_configured():
+        return []
+    return supabase_request(
+        "GET",
+        "guest_stays",
+        query={
+            "select": "*",
+            "order": "check_in_date.asc,room_no.asc,guest_name.asc",
+            "limit": "10000",
+        },
+    ) or []
 
 
 def records_to_stays(records: list[dict]) -> list[Stay]:
@@ -557,7 +639,8 @@ function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th
 function table(rows,heads,mapper){return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+rows.map(mapper).join('')+'</tbody></table></div>'}
 function collectionBreakdown(rows){let map={};rows.filter(r=>!r.is_paid_continuation).forEach(r=>{let key=r.payment_method||"Unknown";map[key]??={payment_method:key,bills:0,amount:0,kelestarian:0};map[key].bills++;map[key].amount+=asMoney(r.price);map[key].kelestarian+=asMoney(r.kelestarian)});return Object.values(map).sort((a,b)=>b.amount-a.amount)}
 function render(){qa(".filters button").forEach(b=>b.classList.toggle("active",b.dataset.range===rangeMode));let filtered=visibleRows();let visibleSales=filtered.reduce((t,r)=>t+asMoney(r.price),0),visibleFee=filtered.reduce((t,r)=>t+asMoney(r.kelestarian),0);q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=filtered.length;q("#mSales").textContent='RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#mFee").textContent='RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let byDay={};filtered.forEach(r=>{byDay[r.display_date]??={rooms:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].fee+=asMoney(r.kelestarian)});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Bilik Dipaparkan','Malam Dipaparkan','Kutipan Pada Hari Ini'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.rooms}</td><td>RM ${r.fee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'No rows in this date range.';q("#previewC").className=filtered.length?'':'empty';q("#previewC").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let analytics=q("#analytics"),collections=collectionBreakdown(filtered);if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Collected in range</span><strong>RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Kelestarian in range</span><strong>RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Collection methods</span><strong>'+collections.length+'</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div><h2>Payment collection methods</h2><br>'+ (collections.length?table(collections,['Payment Method','Bills','Collected','Kelestarian'],r=>`<tr><td>${r.payment_method}</td><td>${r.bills}</td><td>RM ${r.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${r.kelestarian.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'<div class="empty">No collections in this date range.</div>') + '<br><h2>Revenue by rate type</h2><br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
-async function importFile(file){q("#dropText").innerHTML=file.name+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Imported ${summary.stays} stays and expanded them into ${summary.sale_rows} daily sales rows.`;q("#dropText").innerHTML=file.name+'<small>Imported</small>';render()}
+async function importFile(file){q("#dropText").innerHTML=file.name+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Imported ${summary.stays} stays and expanded them into ${summary.sale_rows} daily sales rows${data.saved?' and saved them to Supabase.':'.'}`;q("#dropText").innerHTML=file.name+'<small>Imported</small>';render()}
+async function loadHistory(){let res=await fetch('/api/history?fee_rate='+(settings().fee_rate||'5.00'));let data=await res.json();if(!res.ok||!data.enabled||!data.stays.length)return;stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Loaded ${summary.stays} saved stays from Supabase.`;render()}
 async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=kind==='b'?'laporan-b.pdf':'laporan-c.pdf';a.click();URL.revokeObjectURL(url)}
 qa(".nav button").forEach(b=>b.onclick=()=>{qa(".nav button").forEach(x=>x.classList.remove('active'));b.classList.add('active');qa(".view").forEach(v=>v.classList.remove('active'));q("#"+b.dataset.view).classList.add('active');q("#pageTitle").textContent=b.textContent});
 q("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);q("#search").oninput=render;q("#downloadB").onclick=()=>download('b');q("#downloadC").onclick=()=>download('c');
@@ -567,6 +650,7 @@ q("#startDate").value=localStorage.getItem("startDate")||"";q("#endDate").value=
 let drop=q("#drop");['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])importFile(e.dataTransfer.files[0])});
 qa(".setting").forEach(i=>{i.value=localStorage.getItem('set_'+i.name)||i.value;i.oninput=()=>localStorage.setItem('set_'+i.name,i.value)});
 render();
+loadHistory();
 </script>
 </body>
 </html>"""
@@ -585,9 +669,32 @@ def api_import():
     try:
         fee_rate = dec(request.form.get("fee_rate", "5.00"))
         stays = parse_stays(upload.filename, upload.read())
-        return jsonify({"stays": [stay_record(s) for s in stays], "sales": expanded_sales(stays, fee_rate), "summary": summary(stays, fee_rate)})
+        sales = expanded_sales(stays, fee_rate)
+        summary_data = summary(stays, fee_rate)
+        saved = False
+        save_error = ""
+        try:
+            saved = save_import_to_supabase(upload.filename, stays, sales, summary_data)
+        except Exception as exc:
+            save_error = str(exc)
+        return jsonify({"stays": [stay_record(s) for s in stays], "sales": sales, "summary": summary_data, "saved": saved, "save_error": save_error})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.get("/api/history")
+def api_history():
+    try:
+        if not supabase_configured():
+            return jsonify({"enabled": False, "stays": [], "sales": [], "summary": {}})
+        fee_rate = dec(request.args.get("fee_rate", "5.00"))
+        records = load_stays_from_supabase()
+        if not records:
+            return jsonify({"enabled": True, "stays": [], "sales": [], "summary": {}})
+        stays = records_to_stays(records)
+        return jsonify({"enabled": True, "stays": [stay_record(s) for s in stays], "sales": expanded_sales(stays, fee_rate), "summary": summary(stays, fee_rate)})
+    except Exception as exc:
+        return jsonify({"enabled": supabase_configured(), "error": str(exc)}), 400
 
 
 @app.post("/api/report")

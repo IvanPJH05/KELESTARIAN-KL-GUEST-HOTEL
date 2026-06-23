@@ -1,38 +1,37 @@
 # KELESTARIAN KL Guest Hotel
 
-This Vercel-ready Flask app generates two PDF reports from the guest check-in Excel export:
+Vercel-ready Flask app for KL Guest Hotel sales tracking and Lampiran PDF generation.
 
-- Lampiran B: Laporan Penyata Kutipan Fi Kelestarian Negeri Selangor (Bulanan)
-- Lampiran C: Laporan Transaksi Penggunaan Bilik (Harian)
+## What It Does
 
-## How it works
+1. Upload the hotel `Sales Bill Register` Excel export.
+2. Extract guest stays, rooms, nights, payment method, tax, and sales totals.
+3. Save imported guest stays to Supabase when configured.
+4. Display a dashboard grouped by date and room.
+5. Separate collections by payment method.
+6. Generate Lampiran B and Lampiran C PDF reports.
 
-1. Upload the guest check-in `.xls` or `.xlsx` file.
-2. Fill in the hotel and licence details.
-3. Confirm the fee rate. The default is RM5.00 per room-night.
-4. Download the ZIP containing both completed PDF files.
+## Supabase
 
-The parser expects the guest check-in export layout used in the provided sample:
+The Supabase schema is in [supabase/schema.sql](supabase/schema.sql).
 
-- Column A: Voucher number
-- Column B: Room number
-- Column C: Room type
-- Column D: Room rate
-- Column E: Booking source (`WLKIN` = Walk-in, `XPDIA` = Online Booking)
-- Column F: Guest name
-- Column K: Check-in date
-- Column L: Check-in time
-- Column M: Check-out date
-- Column N: Number of nights
+The schema has already been applied to project:
 
-The website ledger expands every stay across all occupied nights. One-night stays remain uncoloured. For multi-night stays, the check-in/payment row is yellow; subsequent already-paid nights are blue and show `PAID` instead of repeating the amounts. These audit colours and labels are website-only. Generated PDFs retain the official layouts: Lampiran C records each booking once on its check-in date, with the full number of nights and corresponding fee, so totals are not duplicated.
-
-## Deploy to Vercel
-
-Connect this repository to Vercel, or deploy from the Vercel CLI:
-
-```bash
-vercel deploy
+```text
+joaoirpegnkexmktylop
 ```
 
-Vercel detects the Flask app from `app.py` and installs dependencies from `requirements.txt`.
+Add these Vercel environment variables:
+
+```text
+SUPABASE_URL=https://joaoirpegnkexmktylop.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+Use the service role key only on the server. Do not expose it in browser code.
+
+## Deploy To Vercel
+
+Connect this repository to Vercel. Vercel detects the Flask app from `app.py` and installs dependencies from `requirements.txt`.
+
+After changing environment variables, redeploy the latest `main` branch.
