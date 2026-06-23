@@ -7,6 +7,11 @@ from pypdf import PdfReader
 from app import PAGE, Stay, expanded_sales, form_b_pdf, form_c_pdf, parse_stays, report_filename, summary
 
 
+def test_reporting_settings_include_default_contact_details():
+    assert 'value="012-205-0039 / hueyjiunphang@gmail.com"' in PAGE
+    assert 'value="8, Jalan AU 1a/4c, Taman Keramat Permai, 54200 Kuala Lumpur, Federal Territory of Kuala Lumpur"' in PAGE
+
+
 FEE = Decimal("5.00")
 SETTINGS = {
     "premise_name": "Audit Hotel",

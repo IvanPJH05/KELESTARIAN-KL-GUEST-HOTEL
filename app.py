@@ -599,9 +599,9 @@ PAGE = r"""<!doctype html>
         <label>No. Siri Sijil<input name="certificate_no" class="setting"></label>
         <label>Kod Kategori Premis<input name="category_code" class="setting" placeholder="Hotel 1-3 bintang"></label>
         <label>Wakil Untuk Dihubungi<input name="contact_name" class="setting"></label>
-        <label>No. Telefon / Emel<input name="contact" class="setting"></label>
+        <label>No. Telefon / Emel<input name="contact" class="setting" value="012-205-0039 / hueyjiunphang@gmail.com"></label>
         <label>Fi per bilik/malam (RM)<input name="fee_rate" class="setting" type="number" step="0.01" value="5.00"></label>
-        <label class="wide">Alamat Premis Penginapan<input name="address" class="setting"></label>
+        <label class="wide">Alamat Premis Penginapan<input name="address" class="setting" value="8, Jalan AU 1a/4c, Taman Keramat Permai, 54200 Kuala Lumpur, Federal Territory of Kuala Lumpur"></label>
       </div></div>
     </section>
   </section>
