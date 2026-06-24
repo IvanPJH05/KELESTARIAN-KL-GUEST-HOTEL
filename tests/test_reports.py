@@ -4,7 +4,18 @@ from decimal import Decimal
 
 from pypdf import PdfReader
 
-from app import C_MANUAL_ROWS, PAGE, Stay, expanded_sales, form_b_pdf, form_c_pdf, report_filename, summary
+from app import (
+    C_MANUAL_ROWS,
+    PAGE,
+    Stay,
+    classify_verified_stays,
+    expanded_sales,
+    filter_stays_for_report,
+    form_b_pdf,
+    form_c_pdf,
+    report_filename,
+    summary,
+)
 
 
 FEE = Decimal("5.00")
@@ -19,13 +30,13 @@ SETTINGS = {
 }
 
 
-def stay(name, room, amount, nights, check_in=date(2026, 6, 1)):
+def stay(name, room, amount, nights, check_in=date(2026, 6, 1), folio_no=None, bill_no=None):
     check_out = check_in + timedelta(days=nights)
     total = Decimal(amount)
     return Stay(
-        bill_no=f"BN-{room}",
+        bill_no=bill_no or f"BN-{room}",
         registration_no=f"REG-{room}",
-        folio_no=f"F-{room}",
+        folio_no=folio_no or f"FN-{room}",
         guest_name=name,
         room_no=room,
         departure_date=check_out,
@@ -65,6 +76,10 @@ def pdf_text(pdf):
 def test_reporting_settings_include_default_contact_details():
     assert 'value="012-205-0039 / hueyjiunphang@gmail.com"' in PAGE
     assert 'value="8, Jalan AU 1a/4c, Taman Keramat Permai, 54200 Kuala Lumpur, Federal Territory of Kuala Lumpur"' in PAGE
+    assert 'id="reportMonthB" type="month"' in PAGE
+    assert 'id="reportStartC" type="date"' in PAGE
+    assert 'id="reportEndC" type="date"' in PAGE
+    assert 'data-view="review">Manual Review' in PAGE
 
 
 def test_multi_night_rows_do_not_duplicate_collections():
@@ -112,3 +127,30 @@ def test_lampiran_c_keeps_five_manual_rows_after_overflow_data():
     assert len(reader.pages) == 2
     assert "GUEST 30" in text
     assert "150.00" in text
+
+
+def test_report_date_selection_filters_month_and_keeps_dates_on_separate_forms():
+    june = stay("JUNE", "301", "100.00", 1, date(2026, 6, 30))
+    july = stay("JULY", "302", "100.00", 1, date(2026, 7, 1))
+    selected_b = filter_stays_for_report([june, july], "b", report_month="2026-07")
+    assert [item.guest_name for item in selected_b] == ["JULY"]
+    selected_c = filter_stays_for_report([june, july], "c", report_start="2026-06-30", report_end="2026-07-01")
+    reader, text = pdf_text(form_c_pdf(selected_c, SETTINGS, FEE))
+    assert len(reader.pages) == 4
+    assert "30/06/2026" in text and "01/07/2026" in text
+
+
+def test_folio_and_bill_pair_updates_matching_guest_and_queues_mismatches():
+    existing = [{"id": "row-1", "folio_no": "FN30254", "bill_no": "BN100", "guest_name": "OLD NAME"}]
+    matching = stay("UPDATED NAME", "401", "150.00", 1, folio_no="fn30254", bill_no="bn100")
+    wrong_bill = stay("WRONG BILL", "402", "150.00", 1, folio_no="FN30254", bill_no="BN999")
+    wrong_folio = stay("WRONG FOLIO", "403", "150.00", 1, folio_no="FN99999", bill_no="BN100")
+    accepted, reviews = classify_verified_stays([matching, wrong_bill, wrong_folio], existing)
+    assert len(accepted) == 1
+    assert accepted[0]["folio_no"] == "FN30254"
+    assert accepted[0]["bill_no"] == "BN100"
+    assert accepted[0]["guest_name"] == "UPDATED NAME"
+    assert {item["reason"] for item in reviews} == {
+        "FOLIO_MATCHES_DIFFERENT_BILL",
+        "BILL_MATCHES_DIFFERENT_FOLIO",
+    }
