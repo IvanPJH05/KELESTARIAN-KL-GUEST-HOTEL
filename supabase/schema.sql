@@ -13,7 +13,7 @@ create table if not exists public.hotel_import_batches (
 create table if not exists public.guest_stays (
   id uuid primary key default gen_random_uuid(),
   import_batch_id uuid references public.hotel_import_batches(id) on delete set null,
-  bill_no text unique,
+  bill_no text,
   registration_no text,
   folio_no text unique,
   guest_name text,
@@ -108,6 +108,7 @@ update public.guest_stays
 set folio_no = upper(btrim(folio_no)), bill_no = upper(btrim(bill_no));
 
 create unique index if not exists guest_stays_folio_no_unique_idx on public.guest_stays(folio_no);
+create index if not exists guest_stays_bill_no_idx on public.guest_stays(bill_no);
 
 create index if not exists guest_stays_check_in_date_idx on public.guest_stays(check_in_date);
 create index if not exists guest_stays_import_batch_id_idx on public.guest_stays(import_batch_id);

@@ -1033,7 +1033,7 @@ def api_import():
         except Exception as exc:
             save_error = str(exc)
         response_stays = stays
-        if save_result["saved"]:
+        if supabase_configured():
             verified_records = load_stays_from_supabase()
             if verified_records:
                 response_stays = records_to_stays(verified_records)
