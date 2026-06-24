@@ -260,9 +260,70 @@ def stay_record(stay: Stay) -> dict:
     }
 
 
-def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict], summary_data: dict) -> bool:
+def verification_value(value) -> str:
+    return clean(value).upper()
+
+
+def classify_verified_stays(stays: list[Stay], existing_records: list[dict]) -> tuple[list[dict], list[dict]]:
+    existing_by_folio = {
+        verification_value(row.get("folio_no")): row
+        for row in existing_records
+        if verification_value(row.get("folio_no"))
+    }
+    existing_by_bill = {
+        verification_value(row.get("bill_no")): row
+        for row in existing_records
+        if verification_value(row.get("bill_no"))
+    }
+    accepted_by_folio = {}
+    accepted_bill_to_folio = {}
+    reviews = []
+    for stay in stays:
+        incoming = stay_record(stay)
+        folio = verification_value(stay.folio_no)
+        bill = verification_value(stay.bill_no)
+        incoming["folio_no"] = folio or None
+        incoming["bill_no"] = bill or None
+        folio_match = accepted_by_folio.get(folio) or existing_by_folio.get(folio)
+        bill_match = existing_by_bill.get(bill)
+        accepted_bill_folio = accepted_bill_to_folio.get(bill)
+        existing_bill_folio = verification_value(bill_match.get("folio_no")) if bill_match else ""
+        reason = ""
+        existing = None
+        if not folio or not bill:
+            reason = "MISSING_FOLIO_OR_BILL"
+        elif folio_match and verification_value(folio_match.get("bill_no")) != bill:
+            reason = "FOLIO_MATCHES_DIFFERENT_BILL"
+            existing = folio_match
+        elif accepted_bill_folio and accepted_bill_folio != folio:
+            reason = "BILL_MATCHES_DIFFERENT_FOLIO"
+            existing = accepted_by_folio.get(accepted_bill_folio)
+        elif bill_match and existing_bill_folio != folio:
+            reason = "BILL_MATCHES_DIFFERENT_FOLIO"
+            existing = bill_match
+        if reason:
+            reviews.append(
+                {
+                    "review_key": f"{folio or '(missing)'}|{bill or '(missing)'}",
+                    "folio_no": folio or None,
+                    "incoming_bill_no": bill or None,
+                    "existing_folio_no": verification_value((existing or {}).get("folio_no")) or None,
+                    "existing_bill_no": verification_value((existing or {}).get("bill_no")) or None,
+                    "reason": reason,
+                    "incoming_record": incoming,
+                    "existing_record": existing,
+                    "status": "pending",
+                }
+            )
+            continue
+        accepted_by_folio[folio] = incoming
+        accepted_bill_to_folio[bill] = folio
+    return list(accepted_by_folio.values()), reviews
+
+
+def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict], summary_data: dict) -> dict:
     if not supabase_configured():
-        return False
+        return {"saved": False, "accepted_count": 0, "review_count": 0}
     batch = supabase_request(
         "POST",
         "hotel_import_batches",
@@ -277,21 +338,32 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
         prefer="return=representation",
     )
     batch_id = batch[0]["id"] if batch else None
-    rows = []
-    for stay in stays:
-        row = stay_record(stay)
+    existing_records = load_stays_from_supabase()
+    rows, reviews = classify_verified_stays(stays, existing_records)
+    for row in rows:
         row["import_batch_id"] = batch_id
         row["updated_at"] = datetime.utcnow().isoformat() + "Z"
-        rows.append(row)
+    for review in reviews:
+        review["import_batch_id"] = batch_id
+        review["source_filename"] = filename
+        review["updated_at"] = datetime.utcnow().isoformat() + "Z"
     for index in range(0, len(rows), 500):
         supabase_request(
             "POST",
             "guest_stays",
             rows[index : index + 500],
-            query={"on_conflict": "bill_no"},
+            query={"on_conflict": "folio_no"},
             prefer="resolution=merge-duplicates",
         )
-    return True
+    for index in range(0, len(reviews), 500):
+        supabase_request(
+            "POST",
+            "guest_stay_review_queue",
+            reviews[index : index + 500],
+            query={"on_conflict": "review_key"},
+            prefer="resolution=merge-duplicates",
+        )
+    return {"saved": True, "accepted_count": len(rows), "review_count": len(reviews)}
 
 
 def load_stays_from_supabase() -> list[dict]:
@@ -304,6 +376,21 @@ def load_stays_from_supabase() -> list[dict]:
             "select": "*",
             "order": "check_in_date.asc,room_no.asc,guest_name.asc",
             "limit": "10000",
+        },
+    ) or []
+
+
+def load_review_queue_from_supabase() -> list[dict]:
+    if not supabase_configured():
+        return []
+    return supabase_request(
+        "GET",
+        "guest_stay_review_queue",
+        query={
+            "select": "id,folio_no,incoming_bill_no,existing_folio_no,existing_bill_no,reason,incoming_record,existing_record,source_filename,status,created_at,updated_at",
+            "status": "eq.pending",
+            "order": "updated_at.desc",
+            "limit": "1000",
         },
     ) or []
 
@@ -631,6 +718,29 @@ def report_filename(kind: str, stays: list[Stay]) -> str:
     return f"Lampiran C {period}.pdf"
 
 
+def filter_stays_for_report(stays: list[Stay], kind: str, report_month="", report_start="", report_end="") -> list[Stay]:
+    if kind == "b" and report_month:
+        if not re.fullmatch(r"\d{4}-\d{2}", report_month):
+            raise ValueError("Please select a valid month for Lampiran B.")
+        year, month = (int(part) for part in report_month.split("-"))
+        selected = [stay for stay in stays if stay.check_in_date and stay.check_in_date.year == year and stay.check_in_date.month == month]
+    elif kind == "c" and (report_start or report_end):
+        try:
+            start = date.fromisoformat(report_start or report_end)
+            end = date.fromisoformat(report_end or report_start)
+        except ValueError as exc:
+            raise ValueError("Please select valid dates for Lampiran C.") from exc
+        if start > end:
+            raise ValueError("Lampiran C start date must be before or equal to the end date.")
+        selected = [stay for stay in stays if stay.check_in_date and start <= stay.check_in_date <= end]
+    else:
+        selected = stays
+    if not selected:
+        label = "month" if kind == "b" else "date range"
+        raise ValueError(f"No guest check-ins were found for the selected {label}.")
+    return selected
+
+
 def form_b_pdf(stays: list[Stay], settings: dict, fee_rate: Decimal) -> bytes:
     check_in_rows = [row for row in expanded_sales(stays, fee_rate) if not row["is_paid_continuation"]]
     months = defaultdict(list)
@@ -804,7 +914,7 @@ PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KL Guest Hotel Sales</title>
 <style>
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:#f2f6fb;color:#071a36}*{box-sizing:border-box}body{margin:0}.app{min-height:100vh;display:grid;grid-template-columns:278px 1fr}.sidebar{background:#12233b;color:#fff;padding:28px 18px;display:flex;flex-direction:column}.brand{display:flex;gap:14px;align-items:center;margin-bottom:30px}.logo{width:48px;height:48px;border-radius:9px;background:#fff;color:#0d3265;display:grid;place-items:center;font-weight:900}.brand span{display:block;color:#b5cae8;font-size:13px}.nav-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8aa6c8;font-weight:900}.nav{display:grid;gap:8px;margin-top:12px}.nav button{background:transparent;color:#b8d0ee;text-align:left;border:0;padding:14px;border-radius:8px;font-size:17px;cursor:pointer}.nav button.active{background:#1d3a60;color:#fff}.account{border-top:1px solid #314966;margin-top:auto;padding-top:28px;display:flex;gap:12px;align-items:center}.avatar{width:42px;height:42px;border-radius:999px;background:#3478d4;display:grid;place-items:center;font-weight:900}.main{padding:28px 34px 42px}.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px}.eyebrow{margin:0 0 8px;color:#7587a0;text-transform:uppercase;letter-spacing:.14em;font-size:13px;font-weight:900}h1{font-size:32px;margin:0}h2{font-size:20px;margin:0}.badge{background:#e8f1fd;color:#1c5a9d;border-radius:999px;padding:9px 16px;font-weight:900;font-size:13px}.notice{background:#e8f2ff;border:1px solid #bdd6fb;color:#0b4f9a;border-radius:9px;padding:16px 18px;margin-bottom:18px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.metric,.panel{background:#fff;border:1px solid #d7e0eb;border-radius:10px;box-shadow:0 8px 24px rgba(10,31,68,.04)}.metric{padding:16px}.metric span{display:block;color:#71839c;font-size:13px}.metric strong{display:block;margin-top:4px;font-size:22px}.panel{padding:22px;margin-bottom:18px}.drop{height:118px;border:1.5px dashed #9cb9dc;border-radius:9px;background:#f8fbff;display:grid;place-items:center;text-align:center;color:#1b5fab;font-weight:900;cursor:pointer}.drop.drag{background:#e8f2ff;border-color:#1b5fab}.drop small{display:block;color:#71839c;font-weight:600;margin-top:5px}.drop input{display:none}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:14px 0;flex-wrap:wrap}.toolbar input{max-width:320px}.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.filters button{border:1px solid #c7d7ea;background:#fff;color:#1a4f8d;border-radius:7px;padding:9px 12px;font-weight:900;cursor:pointer}.filters button.active{background:#1d5fa7;color:#fff;border-color:#1d5fa7}.filters input{width:150px}.settings-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}label{display:grid;gap:7px;font-size:13px;font-weight:800;color:#2f4360}input{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;font:inherit}button.primary{border:0;border-radius:8px;background:#10233e;color:#fff;font-weight:900;padding:12px 18px;cursor:pointer}button.primary:disabled{opacity:.45;cursor:not-allowed}.view{display:none}.view.active{display:block}.table-wrap{overflow:auto;border:1px solid #dde6f1;border-radius:8px;background:#fff}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:left;white-space:nowrap}th{background:#f5f8fc;color:#516985;font-size:12px;text-transform:uppercase;letter-spacing:.05em}.day-row td{background:#edf4fc;color:#153a63;font-weight:900;font-size:14px}.multi td{background:#fff7dd}.paid-continuation td{background:#eaf8ef;color:#16633a}.paid-pill{display:inline-block;background:#dff5e8;color:#16633a;border:1px solid #a9dfbf;border-radius:999px;padding:4px 9px;font-weight:900}.empty{color:#71839c;padding:22px;border:1px dashed #c9d8ea;border-radius:8px;background:#f9fbfe}.report-grid{display:grid;grid-template-columns:1fr;gap:18px}.wide{grid-column:span 2}@media(max-width:1050px){.app{grid-template-columns:1fr}.sidebar{display:none}.cards,.settings-grid{grid-template-columns:1fr}.main{padding:20px}.top{flex-direction:column;gap:12px}}
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:#f2f6fb;color:#071a36}*{box-sizing:border-box}body{margin:0}.app{min-height:100vh;display:grid;grid-template-columns:278px 1fr}.sidebar{background:#12233b;color:#fff;padding:28px 18px;display:flex;flex-direction:column}.brand{display:flex;gap:14px;align-items:center;margin-bottom:30px}.logo{width:48px;height:48px;border-radius:9px;background:#fff;color:#0d3265;display:grid;place-items:center;font-weight:900}.brand span{display:block;color:#b5cae8;font-size:13px}.nav-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8aa6c8;font-weight:900}.nav{display:grid;gap:8px;margin-top:12px}.nav button{background:transparent;color:#b8d0ee;text-align:left;border:0;padding:14px;border-radius:8px;font-size:17px;cursor:pointer}.nav button.active{background:#1d3a60;color:#fff}.account{border-top:1px solid #314966;margin-top:auto;padding-top:28px;display:flex;gap:12px;align-items:center}.avatar{width:42px;height:42px;border-radius:999px;background:#3478d4;display:grid;place-items:center;font-weight:900}.main{padding:28px 34px 42px}.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px}.eyebrow{margin:0 0 8px;color:#7587a0;text-transform:uppercase;letter-spacing:.14em;font-size:13px;font-weight:900}h1{font-size:32px;margin:0}h2{font-size:20px;margin:0}.badge{background:#e8f1fd;color:#1c5a9d;border-radius:999px;padding:9px 16px;font-weight:900;font-size:13px}.notice{background:#e8f2ff;border:1px solid #bdd6fb;color:#0b4f9a;border-radius:9px;padding:16px 18px;margin-bottom:18px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.metric,.panel{background:#fff;border:1px solid #d7e0eb;border-radius:10px;box-shadow:0 8px 24px rgba(10,31,68,.04)}.metric{padding:16px}.metric span{display:block;color:#71839c;font-size:13px}.metric strong{display:block;margin-top:4px;font-size:22px}.panel{padding:22px;margin-bottom:18px}.drop{height:118px;border:1.5px dashed #9cb9dc;border-radius:9px;background:#f8fbff;display:grid;place-items:center;text-align:center;color:#1b5fab;font-weight:900;cursor:pointer}.drop.drag{background:#e8f2ff;border-color:#1b5fab}.drop small{display:block;color:#71839c;font-weight:600;margin-top:5px}.drop input{display:none}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:14px 0;flex-wrap:wrap}.toolbar input{max-width:320px}.filters,.report-controls{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:0 0 14px}.filters button{border:1px solid #c7d7ea;background:#fff;color:#1a4f8d;border-radius:7px;padding:9px 12px;font-weight:900;cursor:pointer}.filters button.active{background:#1d5fa7;color:#fff;border-color:#1d5fa7}.filters input{width:150px}.report-controls label{min-width:190px}.settings-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}label{display:grid;gap:7px;font-size:13px;font-weight:800;color:#2f4360}input{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;font:inherit}button.primary{border:0;border-radius:8px;background:#10233e;color:#fff;font-weight:900;padding:12px 18px;cursor:pointer}button.primary:disabled{opacity:.45;cursor:not-allowed}.view{display:none}.view.active{display:block}.table-wrap{overflow:auto;border:1px solid #dde6f1;border-radius:8px;background:#fff}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:left;white-space:nowrap}th{background:#f5f8fc;color:#516985;font-size:12px;text-transform:uppercase;letter-spacing:.05em}.day-row td{background:#edf4fc;color:#153a63;font-weight:900;font-size:14px}.multi td{background:#fff7dd}.paid-continuation td{background:#eaf8ef;color:#16633a}.paid-pill{display:inline-block;background:#dff5e8;color:#16633a;border:1px solid #a9dfbf;border-radius:999px;padding:4px 9px;font-weight:900}.review-reason{color:#9b2c2c;font-weight:900}.empty{color:#71839c;padding:22px;border:1px dashed #c9d8ea;border-radius:8px;background:#f9fbfe}.report-grid{display:grid;grid-template-columns:1fr;gap:18px}.wide{grid-column:span 2}@media(max-width:1050px){.app{grid-template-columns:1fr}.sidebar{display:none}.cards,.settings-grid{grid-template-columns:1fr}.main{padding:20px}.top{flex-direction:column;gap:12px}}
 </style>
 </head>
 <body>
@@ -816,6 +926,7 @@ PAGE = r"""<!doctype html>
       <button data-view="dashboard" class="active">Dashboard</button>
       <button data-view="b">Laporan B</button>
       <button data-view="c">Laporan C</button>
+      <button data-view="review">Manual Review</button>
       <button data-view="settings">Settings</button>
     </nav>
     <div class="account"><div class="avatar">A</div><div><strong>Admin</strong><br><span style="color:#a6bddb">@admin</span></div></div>
@@ -837,10 +948,13 @@ PAGE = r"""<!doctype html>
       <div class="panel"><h2>Sales reports</h2><br><div id="analytics" class="empty">Import Excel first.</div></div>
     </section>
     <section id="b" class="view">
-      <div class="panel"><div class="toolbar"><h2>Laporan B preview</h2><button class="primary" id="downloadB" disabled>Download PDF</button></div><div id="previewB" class="empty">Import Excel first.</div></div>
+      <div class="panel"><div class="toolbar"><h2>Laporan B preview</h2><button class="primary" id="downloadB" disabled>Download PDF</button></div><div class="report-controls"><label>Month to print<input id="reportMonthB" type="month"></label></div><div id="previewB" class="empty">Import Excel first.</div></div>
     </section>
     <section id="c" class="view">
-      <div class="panel"><div class="toolbar"><h2>Laporan C preview</h2><button class="primary" id="downloadC" disabled>Download PDF</button></div><div id="previewC" class="empty">Import Excel first.</div></div>
+      <div class="panel"><div class="toolbar"><h2>Laporan C preview</h2><button class="primary" id="downloadC" disabled>Download PDF</button></div><div class="report-controls"><label>First date<input id="reportStartC" type="date"></label><label>Last date<input id="reportEndC" type="date"></label></div><div id="previewC" class="empty">Import Excel first.</div></div>
+    </section>
+    <section id="review" class="view">
+      <div class="panel"><div class="toolbar"><div><h2>Manual Review</h2><small>Folio and Bill Number mismatches are kept out of the guest database.</small></div><button class="primary" id="refreshReview">Refresh</button></div><div id="reviewQueue" class="empty">No records need manual review.</div></div>
     </section>
     <section id="settings" class="view">
       <div class="panel"><h2>Reporting settings</h2><br><div class="settings-grid">
@@ -861,28 +975,37 @@ let stays=JSON.parse(localStorage.getItem("stays")||"[]");
 let sales=JSON.parse(localStorage.getItem("sales")||"[]");
 let summary=JSON.parse(localStorage.getItem("summary")||"{}");
 let rangeMode=localStorage.getItem("rangeMode")||"month";
+let reviewQueue=[];
 const q=s=>document.querySelector(s), qa=s=>[...document.querySelectorAll(s)];
 function settings(){let o={};qa(".setting").forEach(i=>o[i.name]=i.value);return o}
 function asMoney(v){return Number(String(v||"0").replace(/,/g,""))||0}
+function html(v){return String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
 function iso(d){let z=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate())}
 function rangeBounds(){let now=new Date(),start=new Date(now),end=new Date(now);start.setHours(0,0,0,0);end.setHours(0,0,0,0);if(rangeMode==="last7"){start.setDate(start.getDate()-6)}else if(rangeMode==="month"){start=new Date(now.getFullYear(),now.getMonth(),1);end=new Date(now.getFullYear(),now.getMonth()+1,0)}else if(rangeMode==="custom"){let s=q("#startDate").value,e=q("#endDate").value;return {start:s||"0000-01-01",end:e||"9999-12-31"}}return {start:iso(start),end:iso(end)}}
 function visibleRows(){let bounds=rangeBounds(),term=q("#search").value.toLowerCase();return sales.filter(r=>r.date>=bounds.start&&r.date<=bounds.end).filter(r=>(String(r.guest_name||"")+" "+String(r.room_no||"")).toLowerCase().includes(term))}
 function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Stay</th><th>Amount Paid</th><th>Kelestarian</th><th>Payment</th><th>Rate Type</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{let paid=r.is_paid_continuation?`<span class="paid-pill">${r.payment_status||("Paid on "+(r.display_date||""))}</span>`:`RM ${r.price||"0.00"}`;let fee=r.is_paid_continuation?"":`RM ${r.kelestarian||"0.00"}`;if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="7">${cur}</td></tr>`}html+=`<tr class="${r.is_paid_continuation?'paid-continuation':(r.multi_night?'multi':'')}"><td>${r.room_no||''}</td><td>${r.guest_name||''}</td><td>${r.stay_progress||''}</td><td>${paid}</td><td>${fee}</td><td>${r.payment_method||''}</td><td>${r.rate_type||''}</td></tr>`});return html+'</tbody></table></div>'}
 function table(rows,heads,mapper){return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+rows.map(mapper).join('')+'</tbody></table></div>'}
 function collectionBreakdown(rows){let map={};rows.filter(r=>!r.is_paid_continuation).forEach(r=>{let key=r.payment_method||"Unknown";map[key]??={payment_method:key,bills:0,amount:0,kelestarian:0};map[key].bills++;map[key].amount+=asMoney(r.price);map[key].kelestarian+=asMoney(r.kelestarian)});return Object.values(map).sort((a,b)=>b.amount-a.amount)}
-function render(){qa(".filters button").forEach(b=>b.classList.toggle("active",b.dataset.range===rangeMode));let filtered=visibleRows();let visibleSales=filtered.reduce((t,r)=>t+asMoney(r.price),0),visibleFee=filtered.reduce((t,r)=>t+asMoney(r.kelestarian),0);q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=filtered.length;q("#mSales").textContent='RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#mFee").textContent='RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let byDay={};filtered.forEach(r=>{byDay[r.display_date]??={rooms:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].fee+=asMoney(r.kelestarian)});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Bilik Dipaparkan','Malam Dipaparkan','Kutipan Pada Hari Ini'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.rooms}</td><td>RM ${r.fee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'No rows in this date range.';q("#previewC").className=filtered.length?'':'empty';q("#previewC").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let analytics=q("#analytics"),collections=collectionBreakdown(filtered);if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Collected in range</span><strong>RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Kelestarian in range</span><strong>RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Collection methods</span><strong>'+collections.length+'</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div><h2>Payment collection methods</h2><br>'+ (collections.length?table(collections,['Payment Method','Bills','Collected','Kelestarian'],r=>`<tr><td>${r.payment_method}</td><td>${r.bills}</td><td>RM ${r.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${r.kelestarian.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'<div class="empty">No collections in this date range.</div>') + '<br><h2>Revenue by rate type</h2><br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
-async function importFile(file){q("#dropText").innerHTML=file.name+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Imported ${summary.stays} stays and expanded them into ${summary.sale_rows} daily sales rows${data.saved?' and saved them to Supabase.':'.'}`;q("#dropText").innerHTML=file.name+'<small>Imported</small>';render()}
+function setReportDefaults(){let dates=stays.map(s=>s.check_in_date).filter(Boolean).sort(),latest=dates.at(-1);if(!latest)return;if(!q("#reportMonthB").value)q("#reportMonthB").value=localStorage.getItem("reportMonthB")||latest.slice(0,7);if(!q("#reportStartC").value)q("#reportStartC").value=localStorage.getItem("reportStartC")||latest;if(!q("#reportEndC").value)q("#reportEndC").value=localStorage.getItem("reportEndC")||latest}
+function selectedCheckIns(kind){let rows=sales.filter(r=>!r.is_paid_continuation);if(kind==='b'){let month=q("#reportMonthB").value;return rows.filter(r=>r.date.slice(0,7)===month)}let start=q("#reportStartC").value,end=q("#reportEndC").value;return rows.filter(r=>(!start||r.date>=start)&&(!end||r.date<=end))}
+function renderReviewQueue(){let el=q("#reviewQueue");el.className=reviewQueue.length?'':'empty';el.innerHTML=reviewQueue.length?table(reviewQueue,['Folio No.','Incoming Bill','Existing Bill','Guest','Reason','Source'],r=>`<tr><td>${html(r.folio_no)}</td><td>${html(r.incoming_bill_no)}</td><td>${html(r.existing_bill_no)}</td><td>${html((r.incoming_record||{}).guest_name)}</td><td class="review-reason">${html(String(r.reason||'').replaceAll('_',' '))}</td><td>${html(r.source_filename)}</td></tr>`):'No records need manual review.'}
+function render(){setReportDefaults();qa(".filters button").forEach(b=>b.classList.toggle("active",b.dataset.range===rangeMode));let filtered=visibleRows();let visibleSales=filtered.reduce((t,r)=>t+asMoney(r.price),0),visibleFee=filtered.reduce((t,r)=>t+asMoney(r.kelestarian),0);q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=filtered.length;q("#mSales").textContent='RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#mFee").textContent='RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let bSelected=selectedCheckIns('b'),byDay={};bSelected.forEach(r=>{byDay[r.display_date]??={rooms:0,nights:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].nights+=Number(r.nights||0);byDay[r.display_date].fee+=asMoney(r.kelestarian)});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Jumlah Bilik','Bilangan Malam','Jumlah Kutipan'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.nights}</td><td>RM ${r.fee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'No check-ins in the selected month.';let cSelected=selectedCheckIns('c');q("#previewC").className=cSelected.length?'':'empty';q("#previewC").innerHTML=cSelected.length?groupRows(cSelected):'No check-ins in the selected date range.';let analytics=q("#analytics"),collections=collectionBreakdown(filtered);if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Collected in range</span><strong>RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Kelestarian in range</span><strong>RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Collection methods</span><strong>'+collections.length+'</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div><h2>Payment collection methods</h2><br>'+ (collections.length?table(collections,['Payment Method','Bills','Collected','Kelestarian'],r=>`<tr><td>${r.payment_method}</td><td>${r.bills}</td><td>RM ${r.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${r.kelestarian.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'<div class="empty">No collections in this date range.</div>') + '<br><h2>Revenue by rate type</h2><br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
+async function importFile(file){q("#dropText").innerHTML=html(file.name)+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));let message=`Imported ${summary.stays} stays. ${data.accepted_count||0} verified record(s) were saved.`;if(data.review_count)message+=` ${data.review_count} mismatch(es) were sent to Manual Review.`;if(data.save_error)message+=` Database warning: ${data.save_error}`;q("#notice").textContent=message;q("#dropText").innerHTML=html(file.name)+'<small>Imported</small>';render();loadReviewQueue()}
 async function loadHistory(){let res=await fetch('/api/history?fee_rate='+(settings().fee_rate||'5.00'));let data=await res.json();if(!res.ok||!data.enabled||!data.stays.length)return;stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Loaded ${summary.stays} saved stays from Supabase.`;render()}
-async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran B.pdf':'Lampiran C.pdf');a.click();URL.revokeObjectURL(url)}
+async function loadReviewQueue(){let res=await fetch('/api/review-queue'),data=await res.json();reviewQueue=res.ok&&data.enabled?(data.records||[]):[];renderReviewQueue()}
+async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));if(kind==='b'){let month=q("#reportMonthB").value;if(!month){q("#notice").textContent='Select a month for Lampiran B.';return}fd.append('report_month',month)}else{let start=q("#reportStartC").value,end=q("#reportEndC").value;if(!start||!end){q("#notice").textContent='Select the first and last date for Lampiran C.';return}if(start>end){q("#notice").textContent='Lampiran C first date must not be after the last date.';return}fd.append('report_start',start);fd.append('report_end',end)}Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran B.pdf':'Lampiran C.pdf');a.click();URL.revokeObjectURL(url)}
 qa(".nav button").forEach(b=>b.onclick=()=>{qa(".nav button").forEach(x=>x.classList.remove('active'));b.classList.add('active');qa(".view").forEach(v=>v.classList.remove('active'));q("#"+b.dataset.view).classList.add('active');q("#pageTitle").textContent=b.textContent});
 q("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);q("#search").oninput=render;q("#downloadB").onclick=()=>download('b');q("#downloadC").onclick=()=>download('c');
+q("#refreshReview").onclick=loadReviewQueue;
 qa(".filters button").forEach(b=>b.onclick=()=>{rangeMode=b.dataset.range;localStorage.setItem("rangeMode",rangeMode);render()});
 q("#startDate").value=localStorage.getItem("startDate")||"";q("#endDate").value=localStorage.getItem("endDate")||"";
 ["#startDate","#endDate"].forEach(id=>q(id).onchange=()=>{rangeMode="custom";localStorage.setItem("rangeMode",rangeMode);localStorage.setItem(id.slice(1),q(id).value);render()});
+["#reportMonthB","#reportStartC","#reportEndC"].forEach(id=>q(id).onchange=()=>{localStorage.setItem(id.slice(1),q(id).value);render()});
 let drop=q("#drop");['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])importFile(e.dataTransfer.files[0])});
 qa(".setting").forEach(i=>{i.value=localStorage.getItem('set_'+i.name)||i.value;i.oninput=()=>localStorage.setItem('set_'+i.name,i.value)});
 render();
 loadHistory();
+loadReviewQueue();
 </script>
 </body>
 </html>"""
@@ -903,13 +1026,20 @@ def api_import():
         stays = parse_stays(upload.filename, upload.read())
         sales = expanded_sales(stays, fee_rate)
         summary_data = summary(stays, fee_rate)
-        saved = False
+        save_result = {"saved": False, "accepted_count": 0, "review_count": 0}
         save_error = ""
         try:
-            saved = save_import_to_supabase(upload.filename, stays, sales, summary_data)
+            save_result = save_import_to_supabase(upload.filename, stays, sales, summary_data)
         except Exception as exc:
             save_error = str(exc)
-        return jsonify({"stays": [stay_record(s) for s in stays], "sales": sales, "summary": summary_data, "saved": saved, "save_error": save_error})
+        response_stays = stays
+        if save_result["saved"]:
+            verified_records = load_stays_from_supabase()
+            if verified_records:
+                response_stays = records_to_stays(verified_records)
+                sales = expanded_sales(response_stays, fee_rate)
+                summary_data = summary(response_stays, fee_rate)
+        return jsonify({"stays": [stay_record(s) for s in response_stays], "sales": sales, "summary": summary_data, **save_result, "save_error": save_error})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -929,11 +1059,28 @@ def api_history():
         return jsonify({"enabled": supabase_configured(), "error": str(exc)}), 400
 
 
+@app.get("/api/review-queue")
+def api_review_queue():
+    try:
+        if not supabase_configured():
+            return jsonify({"enabled": False, "records": []})
+        return jsonify({"enabled": True, "records": load_review_queue_from_supabase()})
+    except Exception as exc:
+        return jsonify({"enabled": supabase_configured(), "error": str(exc), "records": []}), 400
+
+
 @app.post("/api/report")
 def api_report():
     try:
         kind = request.form.get("kind", "b")
         stays = records_to_stays(json.loads(request.form.get("stays", "[]")))
+        stays = filter_stays_for_report(
+            stays,
+            kind,
+            request.form.get("report_month", ""),
+            request.form.get("report_start", ""),
+            request.form.get("report_end", ""),
+        )
         fee_rate = dec(request.form.get("fee_rate", "5.00"))
         settings = {k: clean(request.form.get(k, "")) for k in request.form.keys()}
         pdf = form_b_pdf(stays, settings, fee_rate) if kind == "b" else form_c_pdf(stays, settings, fee_rate)
