@@ -5,22 +5,21 @@ import json
 import os
 import re
 import zipfile
+from calendar import month_name, monthrange
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from html import escape
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from flask import Flask, Response, jsonify, request
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import cm
-from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.pdfgen import canvas
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
@@ -466,103 +465,336 @@ def summary(stays: list[Stay], fee_rate: Decimal) -> dict:
     }
 
 
-def styles():
-    s = getSampleStyleSheet()
-    s.add(ParagraphStyle(name="TitleBlue", parent=s["Title"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=14, leading=17, textColor=colors.HexColor("#1F4E79"), spaceAfter=4))
-    s.add(ParagraphStyle(name="SubTitle", parent=s["Normal"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=10, leading=13, spaceAfter=12))
-    s.add(ParagraphStyle(name="Small", parent=s["Normal"], alignment=TA_LEFT, fontName="Helvetica", fontSize=8, leading=10))
-    s.add(ParagraphStyle(name="SmallBold", parent=s["Small"], fontName="Helvetica-Bold"))
-    return s
+CREST_PATH = os.path.join(os.path.dirname(__file__), "assets", "selangor-crest.jpeg")
+GREY = colors.HexColor("#D9D9D9")
+BODY_FONT = "Helvetica"
+BOLD_FONT = "Helvetica-Bold"
 
 
-def p(text, style):
-    return Paragraph(escape(str(text)), style)
+def _text(c, x, y, value, size=11, bold=False, align="left"):
+    value = clean(value)
+    c.setFillColor(colors.black)
+    c.setFont(BOLD_FONT if bold else BODY_FONT, size)
+    if align == "center":
+        c.drawCentredString(x, y, value)
+    elif align == "right":
+        c.drawRightString(x, y, value)
+    else:
+        c.drawString(x, y, value)
 
 
-def info_table(fields, s):
-    rows = []
-    for i in range(0, len(fields), 2):
-        row = []
-        for label, value in fields[i : i + 2]:
-            row += [p(label, s["SmallBold"]), p(value, s["Small"])]
-        while len(row) < 4:
-            row.append("")
-        rows.append(row)
-    table = Table(rows, colWidths=[3.25 * cm, 5.0 * cm, 3.25 * cm, 5.0 * cm])
-    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B7C3D0")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F2F6FA")), ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#F2F6FA")), ("PADDING", (0, 0), (-1, -1), 5)]))
-    return table
+def _fit_size(value, width, size, bold=False, minimum=7.5):
+    value = clean(value)
+    font = BOLD_FONT if bold else BODY_FONT
+    while size > minimum and stringWidth(value, font, size) > width:
+        size -= 0.25
+    return size
 
 
-def build_pdf(story, page_size=A4):
-    out = io.BytesIO()
-    doc = SimpleDocTemplate(out, pagesize=page_size, leftMargin=1.2 * cm, rightMargin=1.2 * cm, topMargin=1.2 * cm, bottomMargin=1.2 * cm)
-    doc.build(story)
-    return out.getvalue()
+def _wrap_lines(value, width, size=10.5, bold=False, max_lines=2):
+    words = clean(value).split()
+    font = BOLD_FONT if bold else BODY_FONT
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and stringWidth(candidate, font, size) > width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines[:max_lines]
 
 
-def form_fields(settings, month_label="", date_label=""):
-    return [
-        ("Nama Premis Penginapan", settings.get("premise_name", "")),
-        ("No. Lesen Perniagaan (PBT)", settings.get("license_no", "")),
-        ("No. Siri Sijil", settings.get("certificate_no", "")),
-        ("Kod Kategori Premis", settings.get("category_code", "")),
-        ("Alamat Premis Penginapan", settings.get("address", "")),
-        ("Bulan & Tahun Pelaporan" if month_label else "Tarikh Hari Daftar Masuk", month_label or date_label),
-        ("Wakil Untuk Dihubungi", settings.get("contact_name", "")),
-        ("No. Telefon / Emel", settings.get("contact", "")),
-    ]
+def _outer(c, label, x, right, bottom, top=743):
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(0.55)
+    c.rect(x, bottom, right - x, top - bottom, stroke=1, fill=0)
+    _text(c, right - 22, top + 3, label, 12, True, "right")
 
 
-def confirmation(story, s, label, amount):
-    story += [Spacer(1, 10), p("PENGESAHAN OLEH PENGUSAHA PREMIS PENGINAPAN", s["SmallBold"]), p("Saya mengesahkan bahawa maklumat ini adalah BENAR dan TEPAT berdasarkan rekod kutipan SEBENAR bagi tempoh yang dilaporkan.", s["Small"]), Spacer(1, 8), p(f"{label} (RM): {money(amount)}", s["Small"]), p(f"Tarikh: {datetime.now().strftime('%d/%m/%Y')}", s["Small"]), Spacer(1, 28), p("................................................", s["Small"]), p("Cop Rasmi & Tandatangan:", s["Small"])]
+def _crest(c, x=281.5, y=645, width=49, height=72):
+    if os.path.exists(CREST_PATH):
+        c.drawImage(ImageReader(CREST_PATH), x, y, width, height, preserveAspectRatio=True, mask="auto")
+
+
+def _grid(c, x, top, widths, row_heights, fills=None):
+    y = top
+    total_width = sum(widths)
+    for row_no, height in enumerate(row_heights):
+        y -= height
+        if fills and fills[row_no]:
+            c.setFillColor(fills[row_no])
+            c.rect(x, y, total_width, height, stroke=0, fill=1)
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(0.45)
+        c.rect(x, y, total_width, height, stroke=1, fill=0)
+        cursor = x
+        for width in widths[:-1]:
+            cursor += width
+            c.line(cursor, y, cursor, y + height)
+    return y
+
+
+def _cell_text(c, x, y, width, height, value, size=10, bold=False, align="center"):
+    size = _fit_size(value, width - 7, size, bold)
+    baseline = y + (height - size) / 2 + 1
+    if align == "left":
+        _text(c, x + 4, baseline, value, size, bold)
+    else:
+        _text(c, x + width / 2, baseline, value, size, bold, "center")
+
+
+def _b_fields(c, labels, values):
+    label_x = 62.5
+    colon_x = 280.5
+    box_x = 288.5
+    box_width = 266.5
+    top = 570
+    heights = [20.5, 20.5, 20.5, 41, 20.5, 20.5, 20.5, 20.5]
+    y = top
+    for index, (label, value, height) in enumerate(zip(labels, values, heights)):
+        y -= height
+        label_size = _fit_size(label, colon_x - label_x - 8, 11.5)
+        _text(c, label_x, y + (height - label_size) / 2 + 1, label, label_size)
+        _text(c, colon_x, y + (height - 11) / 2 + 1, ":", 11)
+        c.rect(box_x, y, box_width, height, stroke=1, fill=0)
+        if index == 3:
+            lines = _wrap_lines(value, box_width - 12, 10.5, max_lines=2)
+            for line_no, line in enumerate(lines):
+                _text(c, box_x + 6, y + height - 14 - line_no * 14, line, 10.5)
+        else:
+            size = _fit_size(value, box_width - 12, 10.5)
+            _text(c, box_x + 6, y + (height - size) / 2 + 1, value, size)
+    return y
+
+
+B_WIDTHS = [87, 142.5, 126, 143]
+
+
+def _b_table(c, top, rows, include_header=False, include_total=None):
+    rendered = []
+    fills = []
+    if include_header:
+        rendered.append(["Tarikh", "Jumlah Bilik (Unit)", "Bilangan Malam", "Jumlah Kutipan (RM)"])
+        fills.append(GREY)
+    rendered.extend(rows)
+    fills.extend([None] * len(rows))
+    if include_total is not None:
+        rendered.append(include_total)
+        fills.append(GREY)
+    heights = [17.5] * len(rendered)
+    bottom = _grid(c, 56.5, top, B_WIDTHS, heights, fills)
+    y = top
+    for row_no, row in enumerate(rendered):
+        y -= heights[row_no]
+        cursor = 56.5
+        for col_no, value in enumerate(row):
+            _cell_text(c, cursor, y, B_WIDTHS[col_no], heights[row_no], value, 10.5, bool(fills[row_no]))
+            cursor += B_WIDTHS[col_no]
+    return bottom
+
+
+def _b_confirmation(c, total_fee, table_bottom):
+    heading_y = table_bottom - 27
+    _text(c, 56.5, heading_y, "C. PENGESAHAN OLEH PENGUSAHA PREMIS PENGINAPAN", 12, True)
+    _text(c, 56.5, heading_y - 26, "Saya mengesahkan bahawa maklumat ini adalah BENAR dan TEPAT berdasarkan rekod", 11)
+    _text(c, 56.5, heading_y - 41, "kutipan SEBENAR bagi bulan yang dilaporkan.", 11)
+    _text(c, 56.5, heading_y - 71, f"Jumlah Kutipan Bulanan (RM) : {money(total_fee)}", 11.5, True)
+    _text(c, 56.5, heading_y - 88, f"Tarikh : {datetime.now().strftime('%d/%m/%Y')}", 11.5, True)
+    _text(c, 56.5, heading_y - 157, "................................................", 11, True)
+    _text(c, 56.5, heading_y - 172, "Cop Rasmi & Tandatangan:", 11.5, True)
+    divider = heading_y - 188
+    c.line(50.5, divider, 561, divider)
+    _text(c, 56.5, divider - 22, "D. UNTUK KEGUNAAN PEJABAT PBT SAHAJA", 12, True)
+    _text(c, 56.5, divider - 50, "(SEMAKAN & PENGESAHAN PBT)", 12, True)
+    pbt = ["Tarikh Diterima", "Ulasan / Catatan", "Jumlah Kutipan Bulanan (RM)", "Caj lewat (RM) (Sekiranya ada)"]
+    for index, label in enumerate(pbt):
+        y = divider - 83 - index * 17
+        _text(c, 62, y, label, 11)
+        _text(c, 240, y, ": ................................................", 11)
+    _text(c, 56.5, divider - 202, "................................................", 11, True)
+    _text(c, 56.5, divider - 217, "Cop Rasmi & Tandatangan:", 11.5, True)
+
+
+def report_filename(kind: str, stays: list[Stay]) -> str:
+    check_in_dates = sorted({stay.check_in_date for stay in stays if stay.check_in_date})
+    if kind == "b":
+        months = sorted({(day.year, day.month) for day in check_in_dates})
+        labels = [f"{month_name[month]} {year}" for year, month in months]
+        period = labels[0] if len(labels) == 1 else f"{labels[0]} to {labels[-1]}"
+        return f"Lampiran B {period}.pdf"
+    labels = [f"{day.day:02d} {month_name[day.month]} {day.year}" for day in check_in_dates]
+    period = labels[0] if len(labels) == 1 else f"{labels[0]} to {labels[-1]}"
+    return f"Lampiran C {period}.pdf"
 
 
 def form_b_pdf(stays: list[Stay], settings: dict, fee_rate: Decimal) -> bytes:
-    s = styles()
-    first_day = min(stay.check_in_date for stay in stays if stay.check_in_date)
-    grouped = defaultdict(list)
-    for row in expanded_sales(stays, fee_rate):
-        grouped[row["display_date"]].append(row)
-    story = [p("LAPORAN PENYATA KUTIPAN FI KELESTARIAN NEGERI SELANGOR", s["TitleBlue"]), p("(BULANAN)", s["SubTitle"]), info_table(form_fields(settings, month_label=first_day.strftime("%B %Y")), s), Spacer(1, 12)]
-    rows = [["Tarikh", "Jumlah Bilik (Unit)", "Bilangan Malam", "Jumlah Kutipan (RM)"]]
-    total_rooms = total_nights = 0
-    total_fee = Decimal("0")
-    for day in sorted(grouped.keys(), key=lambda d: datetime.strptime(d, "%d/%m/%Y")):
-        rooms = len(grouped[day])
-        fee = sum((dec(row["kelestarian"]) for row in grouped[day]), Decimal("0"))
-        total_rooms += rooms
-        total_nights += rooms
-        total_fee += fee
-        rows.append([day, str(rooms), str(rooms), money(fee)])
-    rows.append(["Jumlah", str(total_rooms), str(total_nights), money(total_fee)])
-    table = Table(rows, repeatRows=1, colWidths=[4.3 * cm, 4.3 * cm, 4.3 * cm, 4.3 * cm])
-    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#8EA4BA")), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9EAF7")), ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2F0D9")), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("PADDING", (0, 0), (-1, -1), 5)]))
-    story.append(table)
-    confirmation(story, s, "Jumlah Kutipan Bulanan", total_fee)
-    return build_pdf(story)
+    check_in_rows = [row for row in expanded_sales(stays, fee_rate) if not row["is_paid_continuation"]]
+    months = defaultdict(list)
+    for row in check_in_rows:
+        day = date.fromisoformat(row["date"])
+        months[(day.year, day.month)].append(row)
+    out = io.BytesIO()
+    c = canvas.Canvas(out, pagesize=LETTER)
+    for month_index, ((year, month), month_rows) in enumerate(sorted(months.items())):
+        if month_index:
+            c.showPage()
+        daily = defaultdict(list)
+        for row in month_rows:
+            daily[date.fromisoformat(row["date"]).day].append(row)
+        values = [
+            settings.get("premise_name", ""), settings.get("license_no", ""),
+            settings.get("certificate_no", ""), settings.get("address", ""),
+            settings.get("contact_name", ""), settings.get("contact", ""),
+            settings.get("category_code", ""), f"{month_name[month]} {year}",
+        ]
+        labels = ["Nama Premis Penginapan", "No. Lesen Perniagaan (PBT)", "No. Siri Sijil", "Alamat Premis Penginapan", "Nama wakil premis untuk dihubungi", "No. Telefon / Emel", "Kod Kategori Premis Penginapan", "Bulan & Tahun Pelaporan"]
+        _outer(c, "LAMPIRAN B", 50.5, 561, 14.5)
+        _crest(c)
+        _text(c, LETTER[0] / 2, 620, "LAPORAN PENYATA KUTIPAN FI KELESTARIAN NEGERI SELANGOR (BULANAN)", 12, True, "center")
+        _text(c, 56.5, 589, "A. MAKLUMAT PREMIS PENGINAPAN", 12, True)
+        _b_fields(c, labels, values)
+        _text(c, 56.5, 365, "B. MAKLUMAT KUTIPAN FI KELESTARIAN", 12, True)
+        day_rows = []
+        total_rooms = total_nights = 0
+        total_fee = Decimal("0")
+        for day_no in range(1, monthrange(year, month)[1] + 1):
+            collected = daily.get(day_no, [])
+            rooms = len(collected)
+            nights = sum(item["nights"] for item in collected)
+            fee = sum((dec(item["kelestarian"]) for item in collected), Decimal("0"))
+            total_rooms += rooms
+            total_nights += nights
+            total_fee += fee
+            day_rows.append([f"{day_no}/{month:02d}/{year}", str(rooms) if rooms else "", str(nights) if nights else "", money(fee) if fee else ""])
+        _b_table(c, 347.5, day_rows[:18], include_header=True)
+        c.showPage()
+        _outer(c, "LAMPIRAN B", 50.5, 561, 29)
+        bottom = _b_table(c, 743, day_rows[18:], include_total=["Jumlah", str(total_rooms), str(total_nights), money(total_fee)])
+        _b_confirmation(c, total_fee, bottom)
+    c.save()
+    return out.getvalue()
+
+
+C_WIDTHS = [29.5, 276.5, 85, 71, 107.5]
+C_HEADERS = ["Bil.", "Nama", "Jumlah Bilik\n(Unit)", "Bilangan\nMalam", "Jumlah Fi\nKelestarian (RM)"]
+C_MANUAL_ROWS = 5
+
+
+def _c_header_cells(c, x, y, height=40):
+    cursor = x
+    for width, label in zip(C_WIDTHS, C_HEADERS):
+        lines = label.split("\n")
+        baseline = y + height / 2 + (len(lines) - 1) * 6 - 4
+        for line_no, line in enumerate(lines):
+            size = _fit_size(line, width - 6, 11.5, True, 8.5)
+            _text(c, cursor + width / 2, baseline - line_no * 13, line, size, True, "center")
+        cursor += width
+
+
+def _c_rows(c, top, items, capacity, start_number, include_header=False):
+    header_height = 40 if include_header else 0
+    row_height = 17.5
+    padded = items + [None] * max(0, capacity - len(items))
+    fills = ([GREY] if include_header else []) + [None] * len(padded)
+    heights = ([header_height] if include_header else []) + [row_height] * len(padded)
+    bottom = _grid(c, 21, top, C_WIDTHS, heights, fills)
+    y = top
+    if include_header:
+        y -= header_height
+        _c_header_cells(c, 21, y, header_height)
+    for local_no, item in enumerate(padded):
+        y -= row_height
+        if item is None:
+            continue
+        values = [str(start_number + local_no), item["guest_name"], "1", str(item["nights"]), item["kelestarian"]]
+        cursor = 21
+        for col_no, value in enumerate(values):
+            _cell_text(c, cursor, y, C_WIDTHS[col_no], row_height, value, 10.5, False, "left" if col_no == 1 else "center")
+            cursor += C_WIDTHS[col_no]
+    return bottom
+
+
+def _c_first_page(c, settings, day_label, items):
+    _outer(c, "LAMPIRAN C", 15.5, 596, 35.5)
+    _crest(c, 281.5, 664, 49, 72)
+    _text(c, LETTER[0] / 2, 641, "LAPORAN TRANSAKSI PENGGUNAAN BILIK (HARIAN)", 12, True, "center")
+    labels = ["Nama Premis Penginapan", "No. Rujukan Lesen (PBT)", "No. Siri Sijil", "Tarikh Hari Daftar Masuk (Check-In)"]
+    values = [settings.get("premise_name", ""), settings.get("license_no", ""), settings.get("certificate_no", ""), day_label]
+    box_tops = [635, 606, 576.5, 547.5]
+    for label, value, box_top in zip(labels, values, box_tops):
+        size = _fit_size(label, 215, 12)
+        _text(c, 40.5, box_top - 12, label, size)
+        _text(c, 263, box_top - 12, ":", 12)
+        c.rect(270.5, box_top - 15, 306.5, 15, stroke=1, fill=0)
+        value_size = _fit_size(value, 294, 10.5)
+        _text(c, 276.5, box_top - 12, value, value_size)
+    _c_rows(c, 513.5, items, 25, 1, include_header=True)
+
+
+def _c_confirmation(c, table_bottom, rows_for_day):
+    total_rooms = len(rows_for_day)
+    total_nights = sum(row["nights"] for row in rows_for_day)
+    total_fee = sum((dec(row["kelestarian"]) for row in rows_for_day), Decimal("0"))
+    height = 21.5
+    c.setFillColor(GREY)
+    c.rect(21, table_bottom - height, sum(C_WIDTHS), height, stroke=0, fill=1)
+    c.setStrokeColor(colors.black)
+    c.rect(21, table_bottom - height, sum(C_WIDTHS), height, stroke=1, fill=0)
+    cursor = 21 + sum(C_WIDTHS[:2])
+    for width in C_WIDTHS[2:]:
+        c.line(cursor, table_bottom - height, cursor, table_bottom)
+        cursor += width
+    _text(c, 21 + sum(C_WIDTHS[:2]) / 2, table_bottom - 15, "Jumlah Keseluruhan (Unit @ RM)", 11.5, True, "center")
+    cursor = 21 + sum(C_WIDTHS[:2])
+    for width, value in zip(C_WIDTHS[2:], [str(total_rooms), str(total_nights), money(total_fee)]):
+        _cell_text(c, cursor, table_bottom - height, width, height, value, 10.5, True)
+        cursor += width
+    box_top = table_bottom - height - 11
+    c.line(15.5, box_top, 596, box_top)
+    _text(c, 21, box_top - 34, "PENGESAHAN OLEH PENGUSAHA PREMIS PENGINAPAN", 12, True)
+    _text(c, 21, box_top - 57, "Saya mengesahkan bahawa maklumat ini adalah BENAR dan TEPAT berdasarkan rekod kutipan", 11)
+    _text(c, 21, box_top - 72, "SEBENAR bagi hari yang dilaporkan.", 11, True)
+    _text(c, 21, box_top - 101, f"Jumlah Kutipan Harian (RM) : {money(total_fee)}", 11.5, True)
+    _text(c, 21, box_top - 118, f"Tarikh : {datetime.now().strftime('%d/%m/%Y')}", 11.5, True)
+    _text(c, 21, box_top - 185, "................................................", 11, True)
+    _text(c, 21, box_top - 200, "Cop Rasmi & Tandatangan:", 11.5, True)
 
 
 def form_c_pdf(stays: list[Stay], settings: dict, fee_rate: Decimal) -> bytes:
-    s = styles()
     grouped = defaultdict(list)
     for row in expanded_sales(stays, fee_rate):
-        grouped[row["display_date"]].append(row)
-    story = []
-    for idx, day in enumerate(sorted(grouped.keys(), key=lambda d: datetime.strptime(d, "%d/%m/%Y"))):
-        if idx:
-            story.append(PageBreak())
-        rows_for_day = grouped[day]
-        day_fee = sum((dec(row["kelestarian"]) for row in rows_for_day), Decimal("0"))
-        story += [p("LAPORAN TRANSAKSI PENGGUNAAN BILIK", s["TitleBlue"]), p("(HARIAN)", s["SubTitle"]), info_table(form_fields(settings, date_label=day), s), Spacer(1, 10)]
-        rows = [["Bil.", "Nama", "No. Bilik", "Tinggal", "Harga Dibayar (RM)", "Fi Kelestarian (RM)"]]
-        for row_no, item in enumerate(rows_for_day, 1):
-            rows.append([str(row_no), p(item["guest_name"], s["Small"]), item["room_no"], item["stay_progress"], item["payment_status"] if item["is_paid_continuation"] else item["price"], item["kelestarian"]])
-        rows.append(["", "Jumlah Keseluruhan", "", "", "", money(day_fee)])
-        table = Table(rows, repeatRows=1, colWidths=[1.0 * cm, 7.2 * cm, 2.0 * cm, 2.0 * cm, 3.4 * cm, 3.4 * cm])
-        table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#8EA4BA")), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9EAF7")), ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2F0D9")), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("ALIGN", (1, 1), (1, -2), "LEFT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("PADDING", (0, 0), (-1, -1), 4)]))
-        story.append(table)
-        confirmation(story, s, "Jumlah Kutipan Harian", day_fee)
-    return build_pdf(story, page_size=landscape(A4))
+        if not row["is_paid_continuation"]:
+            grouped[row["date"]].append(row)
+    out = io.BytesIO()
+    c = canvas.Canvas(out, pagesize=LETTER)
+    first_report = True
+    for day_key in sorted(grouped):
+        if not first_report:
+            c.showPage()
+        first_report = False
+        rows_for_day = grouped[day_key]
+        day_label = date.fromisoformat(day_key).strftime("%d/%m/%Y")
+        _c_first_page(c, settings, day_label, rows_for_day[:25])
+        remaining = rows_for_day[25:]
+        row_number = 26
+        while len(remaining) > 16:
+            c.showPage()
+            _outer(c, "LAMPIRAN C", 15.5, 596, 35.5)
+            chunk_size = min(35, len(remaining) - 16)
+            chunk = remaining[:chunk_size]
+            _c_rows(c, 743, chunk, len(chunk), row_number, include_header=True)
+            row_number += len(chunk)
+            remaining = remaining[len(chunk):]
+        c.showPage()
+        _outer(c, "LAMPIRAN C", 15.5, 596, 134)
+        bottom = _c_rows(c, 743, remaining, len(remaining) + C_MANUAL_ROWS, row_number, include_header=False)
+        _c_confirmation(c, bottom, rows_for_day)
+    c.save()
+    return out.getvalue()
 
 
 PAGE = r"""<!doctype html>
@@ -617,9 +849,9 @@ PAGE = r"""<!doctype html>
         <label>No. Siri Sijil<input name="certificate_no" class="setting"></label>
         <label>Kod Kategori Premis<input name="category_code" class="setting" placeholder="Hotel 1-3 bintang"></label>
         <label>Wakil Untuk Dihubungi<input name="contact_name" class="setting"></label>
-        <label>No. Telefon / Emel<input name="contact" class="setting"></label>
+        <label>No. Telefon / Emel<input name="contact" class="setting" value="012-205-0039 / hueyjiunphang@gmail.com"></label>
         <label>Fi per bilik/malam (RM)<input name="fee_rate" class="setting" type="number" step="0.01" value="5.00"></label>
-        <label class="wide">Alamat Premis Penginapan<input name="address" class="setting"></label>
+        <label class="wide">Alamat Premis Penginapan<input name="address" class="setting" value="8, Jalan AU 1a/4c, Taman Keramat Permai, 54200 Kuala Lumpur, Federal Territory of Kuala Lumpur"></label>
       </div></div>
     </section>
   </section>
@@ -641,7 +873,7 @@ function collectionBreakdown(rows){let map={};rows.filter(r=>!r.is_paid_continua
 function render(){qa(".filters button").forEach(b=>b.classList.toggle("active",b.dataset.range===rangeMode));let filtered=visibleRows();let visibleSales=filtered.reduce((t,r)=>t+asMoney(r.price),0),visibleFee=filtered.reduce((t,r)=>t+asMoney(r.kelestarian),0);q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=filtered.length;q("#mSales").textContent='RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#mFee").textContent='RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let byDay={};filtered.forEach(r=>{byDay[r.display_date]??={rooms:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].fee+=asMoney(r.kelestarian)});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Bilik Dipaparkan','Malam Dipaparkan','Kutipan Pada Hari Ini'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.rooms}</td><td>RM ${r.fee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'No rows in this date range.';q("#previewC").className=filtered.length?'':'empty';q("#previewC").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let analytics=q("#analytics"),collections=collectionBreakdown(filtered);if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Collected in range</span><strong>RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Kelestarian in range</span><strong>RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Collection methods</span><strong>'+collections.length+'</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div><h2>Payment collection methods</h2><br>'+ (collections.length?table(collections,['Payment Method','Bills','Collected','Kelestarian'],r=>`<tr><td>${r.payment_method}</td><td>${r.bills}</td><td>RM ${r.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${r.kelestarian.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'<div class="empty">No collections in this date range.</div>') + '<br><h2>Revenue by rate type</h2><br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
 async function importFile(file){q("#dropText").innerHTML=file.name+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Imported ${summary.stays} stays and expanded them into ${summary.sale_rows} daily sales rows${data.saved?' and saved them to Supabase.':'.'}`;q("#dropText").innerHTML=file.name+'<small>Imported</small>';render()}
 async function loadHistory(){let res=await fetch('/api/history?fee_rate='+(settings().fee_rate||'5.00'));let data=await res.json();if(!res.ok||!data.enabled||!data.stays.length)return;stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));q("#notice").textContent=`Loaded ${summary.stays} saved stays from Supabase.`;render()}
-async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=kind==='b'?'laporan-b.pdf':'laporan-c.pdf';a.click();URL.revokeObjectURL(url)}
+async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran B.pdf':'Lampiran C.pdf');a.click();URL.revokeObjectURL(url)}
 qa(".nav button").forEach(b=>b.onclick=()=>{qa(".nav button").forEach(x=>x.classList.remove('active'));b.classList.add('active');qa(".view").forEach(v=>v.classList.remove('active'));q("#"+b.dataset.view).classList.add('active');q("#pageTitle").textContent=b.textContent});
 q("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);q("#search").oninput=render;q("#downloadB").onclick=()=>download('b');q("#downloadC").onclick=()=>download('c');
 qa(".filters button").forEach(b=>b.onclick=()=>{rangeMode=b.dataset.range;localStorage.setItem("rangeMode",rangeMode);render()});
@@ -703,10 +935,10 @@ def api_report():
         kind = request.form.get("kind", "b")
         stays = records_to_stays(json.loads(request.form.get("stays", "[]")))
         fee_rate = dec(request.form.get("fee_rate", "5.00"))
-        settings = {k: escape(request.form.get(k, "").strip()) for k in request.form.keys()}
+        settings = {k: clean(request.form.get(k, "")) for k in request.form.keys()}
         pdf = form_b_pdf(stays, settings, fee_rate) if kind == "b" else form_c_pdf(stays, settings, fee_rate)
-        name = "laporan-b.pdf" if kind == "b" else "laporan-c.pdf"
-        return Response(pdf, mimetype="application/pdf", headers={"Content-Disposition": f"attachment; filename={name}"})
+        name = report_filename(kind, stays)
+        return Response(pdf, mimetype="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
     except Exception as exc:
         return Response(str(exc), status=400)
 
