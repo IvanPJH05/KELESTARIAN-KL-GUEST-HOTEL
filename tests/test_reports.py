@@ -83,6 +83,7 @@ def test_reporting_settings_include_default_contact_details():
     assert 'value="012-205-0039 / hueyjiunphang@gmail.com"' in PAGE
     assert 'value="8, Jalan AU 1a/4c, Taman Keramat Permai, 54200 Kuala Lumpur, Federal Territory of Kuala Lumpur"' in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE
+    assert 'id="reportMonthC" type="month"' in PAGE
     assert 'id="reportStartC" type="date"' in PAGE
     assert 'id="reportEndC" type="date"' in PAGE
     assert 'data-view="review">Manual Review' in PAGE
@@ -202,6 +203,8 @@ def test_report_date_selection_filters_month_and_keeps_dates_on_separate_forms()
     july = stay("JULY", "302", "100.00", 1, date(2026, 7, 1))
     selected_b = filter_stays_for_report([june, july], "b", report_month="2026-07")
     assert [item.guest_name for item in selected_b] == ["JULY"]
+    selected_c_month = filter_stays_for_report([june, july], "c", report_month="2026-07")
+    assert [item.guest_name for item in selected_c_month] == ["JULY"]
     selected_c = filter_stays_for_report([june, july], "c", report_start="2026-06-30", report_end="2026-07-01")
     reader, text = pdf_text(form_c_pdf(selected_c, SETTINGS, FEE))
     assert len(reader.pages) == 4
@@ -222,6 +225,27 @@ def test_report_pdfs_are_clipped_to_selected_month_and_date_range():
     assert "30/04/2026" in c_text
     assert "01/05/2026" not in c_text
     assert report_filename("b", [crossing], date(2026, 4, 1), date(2026, 4, 30)) == "Lampiran B April 2026.pdf"
+
+
+def test_api_report_uses_month_for_lampiran_c_pdf():
+    crossing = stay("CROSS MONTH", "401", "200.00", 2, date(2026, 4, 30))
+    client = hotel_app.app.test_client()
+
+    response = client.post(
+        "/api/report",
+        data={
+            "kind": "c",
+            "stays": hotel_app.json.dumps([stay_record(crossing)]),
+            "report_month": "2026-04",
+            **SETTINGS,
+            "fee_rate": "5.00",
+        },
+    )
+
+    assert response.status_code == 200
+    _, text = pdf_text(response.data)
+    assert "30/04/2026" in text
+    assert "01/05/2026" not in text
 
 
 def test_folio_and_bill_pair_updates_matching_guest_and_queues_mismatches():
