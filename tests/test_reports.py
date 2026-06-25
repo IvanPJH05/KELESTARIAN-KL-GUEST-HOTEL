@@ -86,13 +86,12 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="daily-sales-page-20260626"' in PAGE
+    assert 'APP_VERSION="dashboard-lestari-deposit-20260626"' in PAGE
     assert 'data-view="manual">Manual Check-In' in PAGE
-    assert 'data-view="dailySales">Daily Sales' in PAGE
-    assert 'id="dailySalesTable"' in PAGE
-    assert 'id="cashFlowCards"' in PAGE
-    assert 'data-daily-range="today"' in PAGE
-    assert 'data-daily-range="custom"' in PAGE
+    assert 'data-view="dailySales">Daily Sales' not in PAGE
+    assert 'id="lestariDeposit"' in PAGE
+    assert 'Lestari and Deposit' in PAGE
+    assert 'Total Bank Transfer' in PAGE
     assert 'Cash Deposit' in PAGE
     assert 'id="manualRoom"' in PAGE
     assert 'Twin room rate (RM)' in PAGE
@@ -103,6 +102,8 @@ def test_reporting_settings_include_default_contact_details():
     assert 'Online Booking' in PAGE
     assert 'Bank Transfer' in PAGE
     assert 'id="manualHistory"' in PAGE
+    assert '<h2>Transactions</h2>' in PAGE
+    assert 'Transaction history' not in PAGE
     assert 'id="manualRemark"' in PAGE
     assert 'data-delete-manual' in PAGE
     assert 'Room rates JSON' not in PAGE
@@ -503,6 +504,44 @@ def test_delete_manual_checkin_only_deletes_manual_folio(monkeypatch):
 
     blocked = client.post("/api/manual-checkin/delete", data={"folio_no": "FN123"})
     assert blocked.status_code == 400
+
+
+def test_sales_bill_import_matches_manual_room_date_without_moving_money(monkeypatch):
+    calls = []
+    manual = stay_record(stay("Walk-in guest", "305", "108.00", 1, date(2026, 6, 26), folio_no="MANUAL-20260626-305-123456", bill_no="MANUAL-BILL"))
+    manual.update(
+        {
+            "id": "manual-row",
+            "flags": ["MANUAL_CHECK_IN", "DEPOSIT:50.00", "DEPOSIT_PAYMENT:Cash", "KELESTARIAN_PAYMENT:Cash"],
+            "payment_method": "QR",
+        }
+    )
+    incoming = stay("REAL GUEST", "305", "250.00", 1, date(2026, 6, 26), folio_no="FN900", bill_no="BN900")
+
+    def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
+        calls.append({"method": method, "table": table, "payload": payload, "query": query, "prefer": prefer})
+        if table == "hotel_import_batches":
+            return [{"id": "batch-row"}]
+        return None
+
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+    monkeypatch.setattr(hotel_app, "supabase_request", fake_supabase_request)
+    monkeypatch.setattr(hotel_app, "load_matching_stays_from_supabase", lambda stays: [])
+    monkeypatch.setattr(hotel_app, "load_stays_by_checkin_range_from_supabase", lambda start, end: [manual])
+
+    result = hotel_app.save_import_to_supabase("Sales Bill Register_20260626.xls", [incoming], [], summary([incoming], FEE))
+    guest_upserts = [call for call in calls if call["table"] == "guest_stays"]
+
+    assert result["manual_matched_count"] == 1
+    assert result["inserted_count"] == 0
+    assert len(guest_upserts) == 1
+    saved = guest_upserts[0]["payload"][0]
+    assert saved["folio_no"] == "MANUAL-20260626-305-123456"
+    assert saved["guest_name"] == "REAL GUEST"
+    assert saved["amount_paid"] == 108.0
+    assert saved["total_amount"] == 108.0
+    assert saved["payment_method"] == "QR"
+    assert "IMPORT_FOLIO:FN900" in saved["flags"]
 
 
 def test_verified_rows_batch_update_existing_folios_and_insert_new(monkeypatch):
