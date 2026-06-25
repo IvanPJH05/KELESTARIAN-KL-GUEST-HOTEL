@@ -219,7 +219,7 @@ def test_import_response_shows_only_verified_database_rows_after_save(monkeypatc
     assert "REJECTED MISMATCH" not in {item["guest_name"] for item in payload["stays"]}
 
 
-def test_verified_rows_patch_existing_folios_and_insert_new_without_upsert(monkeypatch):
+def test_verified_rows_batch_update_existing_folios_and_insert_new(monkeypatch):
     calls = []
 
     def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
@@ -232,16 +232,18 @@ def test_verified_rows_patch_existing_folios_and_insert_new_without_upsert(monke
 
     hotel_app.save_verified_stay_rows([update_row, insert_row], existing)
 
-    assert calls[0]["method"] == "PATCH"
+    assert calls[0]["method"] == "POST"
     assert calls[0]["table"] == "guest_stays"
-    assert calls[0]["query"] == {"id": "eq.row-1"}
+    assert calls[0]["query"] == {"on_conflict": "id"}
+    assert calls[0]["prefer"] == "resolution=merge-duplicates,return=minimal"
+    assert calls[0]["payload"] == [{**update_row, "id": "row-1"}]
     assert calls[1]["method"] == "POST"
     assert calls[1]["table"] == "guest_stays"
     assert calls[1]["payload"] == [insert_row]
     assert calls[1]["query"] is None
 
 
-def test_verified_rows_patch_existing_bill_when_database_has_bill_constraint(monkeypatch):
+def test_verified_rows_batch_update_existing_bill_when_database_has_bill_constraint(monkeypatch):
     calls = []
 
     def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
@@ -255,11 +257,11 @@ def test_verified_rows_patch_existing_bill_when_database_has_bill_constraint(mon
 
     assert calls == [
         {
-            "method": "PATCH",
+            "method": "POST",
             "table": "guest_stays",
-            "payload": update_row,
-            "query": {"id": "eq.row-bill"},
-            "prefer": "return=minimal",
+            "payload": [{**update_row, "id": "row-bill"}],
+            "query": {"on_conflict": "id"},
+            "prefer": "resolution=merge-duplicates,return=minimal",
         }
     ]
 
