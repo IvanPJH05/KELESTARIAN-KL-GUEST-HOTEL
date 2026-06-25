@@ -82,6 +82,9 @@ def pdf_text(pdf):
 def test_reporting_settings_include_default_contact_details():
     assert 'value="012-205-0039 / hueyjiunphang@gmail.com"' in PAGE
     assert 'value="8, Jalan AU 1a/4c, Taman Keramat Permai, 54200 Kuala Lumpur, Federal Territory of Kuala Lumpur"' in PAGE
+    assert 'id="historicalYear"></select>' in PAGE
+    assert "All years" not in PAGE
+    assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE
     assert 'id="reportMonthC" type="month"' in PAGE
     assert 'id="reportStartC" type="date"' in PAGE
@@ -163,6 +166,26 @@ def test_historical_summary_can_filter_one_year():
     assert data["historical_stays"] == 1
     assert data["total_revenue"] == "100.00"
     assert data["yearly_revenue"] == [{"year": "2024", "stays": 1, "nights": 1, "revenue": "100.00"}]
+
+
+def test_historical_api_defaults_to_latest_single_year(monkeypatch):
+    calls = []
+
+    def fake_load(start, end):
+        calls.append((start, end))
+        return [stay_record(stay("OLD 2025", "102", "200.00", 1, date(2025, 6, 1)))]
+
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+    monkeypatch.setattr(hotel_app, "load_stays_by_checkout_range_from_supabase", fake_load)
+    monkeypatch.setattr(hotel_app, "load_import_batches_from_supabase", lambda: [])
+
+    response = hotel_app.app.test_client().get("/api/historical?fee_rate=5.00")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert calls == [(date(2025, 1, 1), date(2025, 12, 31))]
+    assert payload["summary"]["selected_year"] == "2025"
+    assert payload["summary"]["yearly_revenue"] == [{"year": "2025", "stays": 1, "nights": 1, "revenue": "200.00"}]
 
 
 def test_official_reports_use_letter_pages_totals_and_readable_filenames():
