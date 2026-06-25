@@ -152,6 +152,18 @@ def test_historical_summary_excludes_2026_kelestarian_data():
     assert data["yearly_revenue"] == [{"year": "2025", "stays": 1, "nights": 1, "revenue": "100.00"}]
 
 
+def test_historical_summary_can_filter_one_year():
+    old_2024 = stay("OLD 2024", "101", "100.00", 1, date(2024, 6, 1))
+    old_2025 = stay("OLD 2025", "102", "200.00", 1, date(2025, 6, 1))
+
+    data = historical_summary([old_2024, old_2025], FEE, 2024)
+
+    assert data["selected_year"] == "2024"
+    assert data["historical_stays"] == 1
+    assert data["total_revenue"] == "100.00"
+    assert data["yearly_revenue"] == [{"year": "2024", "stays": 1, "nights": 1, "revenue": "100.00"}]
+
+
 def test_official_reports_use_letter_pages_totals_and_readable_filenames():
     b_reader, b_text = pdf_text(form_b_pdf(scenarios(), SETTINGS, FEE))
     c_reader, c_text = pdf_text(form_c_pdf(scenarios(), SETTINGS, FEE))
@@ -194,6 +206,22 @@ def test_report_date_selection_filters_month_and_keeps_dates_on_separate_forms()
     reader, text = pdf_text(form_c_pdf(selected_c, SETTINGS, FEE))
     assert len(reader.pages) == 4
     assert "30/06/2026" in text and "01/07/2026" in text
+
+
+def test_report_pdfs_are_clipped_to_selected_month_and_date_range():
+    crossing = stay("CROSS MONTH", "401", "200.00", 2, date(2026, 4, 30))
+
+    b_reader, b_text = pdf_text(form_b_pdf([crossing], SETTINGS, FEE, date(2026, 4, 1), date(2026, 4, 30)))
+    c_reader, c_text = pdf_text(form_c_pdf([crossing], SETTINGS, FEE, date(2026, 4, 30), date(2026, 4, 30)))
+
+    assert len(b_reader.pages) == 2
+    assert "April 2026" in b_text
+    assert "30/04/2026" in b_text
+    assert "01/05/2026" not in b_text
+    assert len(c_reader.pages) == 2
+    assert "30/04/2026" in c_text
+    assert "01/05/2026" not in c_text
+    assert report_filename("b", [crossing], date(2026, 4, 1), date(2026, 4, 30)) == "Lampiran B April 2026.pdf"
 
 
 def test_folio_and_bill_pair_updates_matching_guest_and_queues_mismatches():
