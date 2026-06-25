@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from pypdf import PdfReader
 
+import app as hotel_app
 from app import (
     C_MANUAL_ROWS,
     PAGE,
@@ -154,3 +155,65 @@ def test_folio_and_bill_pair_updates_matching_guest_and_queues_mismatches():
         "FOLIO_MATCHES_DIFFERENT_BILL",
         "BILL_MATCHES_DIFFERENT_FOLIO",
     }
+
+
+def test_sales_bill_register_detail_folio_column_value_is_number_of_nights(monkeypatch):
+    bill_row = [
+        "BN99999",
+        "REG99999",
+        "FN99999",
+        "23/06/2026",
+        "  TEST GUEST",
+        "200.00",
+        "0.00",
+        "0.00",
+        "12.00",
+        "0.00",
+        "12.00",
+        "0.00",
+        "0.00",
+        "0.00",
+        "0.00",
+        "0.00",
+        "212.00",
+    ]
+    rows = [
+        (bill_row, None),
+        (["103", "2", "2", "WLKIN"], None),
+        (["212.00", "[Cash : 212.00]"], None),
+    ]
+    monkeypatch.setattr(hotel_app, "excel_rows", lambda _filename, _data: iter(rows))
+
+    parsed = hotel_app.parse_stays("Sales Bill Register.xls", b"fake excel bytes")
+
+    assert len(parsed) == 1
+    assert parsed[0].folio_no == "FN99999"
+    assert parsed[0].number_of_nights == 2
+    assert parsed[0].check_in_date == date(2026, 6, 21)
+    assert parsed[0].check_out_date == date(2026, 6, 23)
+
+
+def test_import_response_shows_only_verified_database_rows_after_save(monkeypatch):
+    verified = stay("VERIFIED GUEST", "401", "150.00", 1, folio_no="FN30254", bill_no="BN100")
+    rejected_mismatch = stay("REJECTED MISMATCH", "402", "150.00", 1, folio_no="FN30254", bill_no="BN999")
+
+    monkeypatch.setattr(hotel_app, "parse_stays", lambda _filename, _data: [rejected_mismatch])
+    monkeypatch.setattr(
+        hotel_app,
+        "save_import_to_supabase",
+        lambda _filename, _stays, _sales, _summary: {"saved": True, "accepted_count": 0, "review_count": 1},
+    )
+    monkeypatch.setattr(hotel_app, "load_stays_from_supabase", lambda: [hotel_app.stay_record(verified)])
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+
+    client = hotel_app.app.test_client()
+    response = client.post(
+        "/api/import",
+        data={"fee_rate": "5.00", "file": (io.BytesIO(b"fake"), "Sales Bill Register.xls")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert [item["guest_name"] for item in payload["stays"]] == ["VERIFIED GUEST"]
+    assert "REJECTED MISMATCH" not in {item["guest_name"] for item in payload["stays"]}
