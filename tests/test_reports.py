@@ -87,6 +87,9 @@ def test_reporting_settings_include_default_contact_details():
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
     assert 'APP_VERSION="dashboard-custom-ledger-20260625"' in PAGE
+    assert 'data-view="manual">Manual Check-In' in PAGE
+    assert 'id="manualRoom"' in PAGE
+    assert 'Room rates JSON' in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE
     assert 'id="reportMonthC" type="month"' in PAGE
     assert 'id="reportStartC" type="date"' in PAGE
@@ -405,6 +408,52 @@ def test_dashboard_history_custom_range_loads_selected_checkins(monkeypatch):
     assert [item["date"] for item in payload["sales"]] == ["2024-01-10", "2024-01-11"]
     assert payload["sales"][0]["price"] == "120.00"
     assert payload["sales"][0]["kelestarian"] == "0.00"
+
+
+def test_manual_checkin_endpoint_saves_deposit_and_payment_metadata(monkeypatch):
+    captured = {}
+
+    def fake_save(filename, stays, sales, summary_data):
+        captured["filename"] = filename
+        captured["stays"] = stays
+        captured["sales"] = sales
+        captured["summary"] = summary_data
+        return {"saved": True, "accepted_count": 1, "review_count": 0}
+
+    monkeypatch.setattr(hotel_app, "save_import_to_supabase", fake_save)
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+
+    response = hotel_app.app.test_client().post(
+        "/api/manual-checkin",
+        data={
+            "room": "305",
+            "guest_name": "MANUAL GUEST",
+            "registration": "walk in",
+            "stay_type": "night",
+            "stay_duration": "3",
+            "check_in_date": "2026-06-26",
+            "check_out_date": "2026-06-29",
+            "amount_paid": "300.00",
+            "payment_method": "card",
+            "kelestarian_payment_method": "card",
+            "deposit_amount": "50.00",
+            "deposit_payment_method": "card",
+            "fee_rate": "5.00",
+        },
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert captured["filename"] == "Manual daily check-in"
+    saved = captured["stays"][0]
+    assert saved.room_no == "305"
+    assert saved.number_of_nights == 3
+    assert saved.payment_method == "Card"
+    assert "KELESTARIAN_PAYMENT:Cash" in saved.flags
+    assert "DEPOSIT_PAYMENT:Cash" in saved.flags
+    assert payload["sales"][0]["deposit"] == "50.00"
+    assert payload["sales"][0]["kelestarian_payment_method"] == "Cash"
+    assert payload["sales"][0]["deposit_payment_method"] == "Cash"
 
 
 def test_verified_rows_batch_update_existing_folios_and_insert_new(monkeypatch):

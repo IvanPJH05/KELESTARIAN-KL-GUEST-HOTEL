@@ -8,7 +8,7 @@ import zipfile
 from calendar import month_name, monthrange
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -296,6 +296,15 @@ def stay_record(stay: Stay) -> dict:
         "payment_method": stay.payment_method,
         "flags": stay.flags,
     }
+
+
+def flag_value(flags: list[str], key: str) -> str:
+    prefix = f"{key}:"
+    for flag in flags or []:
+        text = clean(flag)
+        if text.startswith(prefix):
+            return text[len(prefix) :]
+    return ""
 
 
 def record_identity(record: dict) -> str:
@@ -776,6 +785,9 @@ def ledger_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
             charge_end = min(stay_last_night, KELESTARIAN_END)
             chargeable_nights = max((charge_end - stay.check_in_date).days + 1, 0)
         total_kelestarian = fee_rate * Decimal(chargeable_nights)
+        deposit_amount = dec(flag_value(stay.flags, "DEPOSIT"))
+        kelestarian_payment_method = flag_value(stay.flags, "KELESTARIAN_PAYMENT") or stay.payment_method or ""
+        deposit_payment_method = flag_value(stay.flags, "DEPOSIT_PAYMENT")
         paid_date = stay.check_in_date.strftime("%d/%m/%Y")
         for offset in range(stay.number_of_nights):
             day = stay.check_in_date + timedelta(days=offset)
@@ -797,6 +809,9 @@ def ledger_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
                     "payment_status": "Collected" if is_check_in_day else f"Paid on {paid_date}",
                     "paid_date": stay.check_in_date.isoformat(),
                     "is_paid_continuation": not is_check_in_day,
+                    "deposit": money(deposit_amount if is_check_in_day else Decimal("0")) if deposit_amount else "",
+                    "deposit_payment_method": deposit_payment_method if is_check_in_day else "",
+                    "kelestarian_payment_method": kelestarian_payment_method if is_check_in_day and total_kelestarian else "",
                     "bill_no": stay.bill_no,
                     "payment_method": stay.payment_method,
                     "rate_type": stay.rate_type,
@@ -889,6 +904,85 @@ def summary(stays: list[Stay], fee_rate: Decimal) -> dict:
 
 def kelestarian_stays(stays: list[Stay]) -> list[Stay]:
     return [stay for stay in stays if stay.check_in_date and KELESTARIAN_START <= stay.check_in_date <= KELESTARIAN_END]
+
+
+def manual_payment_method(value: str) -> str:
+    allowed = {
+        "cash": "Cash",
+        "qr": "QR",
+        "card": "Card",
+        "online": "Online",
+        "transfer": "Transfer",
+    }
+    key = clean(value).lower()
+    if key not in allowed:
+        raise ValueError("Please choose a valid payment method.")
+    return allowed[key]
+
+
+def manual_stay_from_form(form) -> Stay:
+    room = clean(form.get("room"))
+    if not room:
+        raise ValueError("Room is required.")
+    registration = clean(form.get("registration")).lower() or "walk in"
+    if registration not in {"walk in", "online", "extension"}:
+        raise ValueError("Please choose a valid registration type.")
+    check_in = date.fromisoformat(clean(form.get("check_in_date")) or date.today().isoformat())
+    stay_type = clean(form.get("stay_type")) or "night"
+    if stay_type == "3_hour":
+        nights = 1
+        rate_type = "3 Hour"
+        duration_label = "3 hour"
+    else:
+        nights = max(num(form.get("stay_duration"), 1), 1)
+        rate_type = registration.upper()
+        duration_label = f"{nights} night"
+    check_out = date.fromisoformat(clean(form.get("check_out_date")) or (check_in + timedelta(days=nights)).isoformat())
+    amount = dec(form.get("amount_paid"))
+    if amount <= 0:
+        raise ValueError("Room payment must be more than RM0.")
+    payment_method = manual_payment_method(form.get("payment_method"))
+    kelestarian_payment = manual_payment_method(form.get("kelestarian_payment_method") or form.get("payment_method"))
+    if kelestarian_payment == "Card":
+        kelestarian_payment = "Cash"
+    deposit_payment = manual_payment_method(form.get("deposit_payment_method") or form.get("payment_method"))
+    if deposit_payment not in {"Cash", "QR"}:
+        deposit_payment = "Cash"
+    deposit_amount = dec(form.get("deposit_amount") or "50")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    identity = f"MANUAL-{check_in.strftime('%Y%m%d')}-{room}-{timestamp}"
+    flags = [
+        "MANUAL_CHECK_IN",
+        f"REGISTRATION:{registration}",
+        f"STAY_TYPE:{duration_label}",
+        f"DEPOSIT:{money(deposit_amount)}",
+        f"DEPOSIT_PAYMENT:{deposit_payment}",
+        f"KELESTARIAN_PAYMENT:{kelestarian_payment}",
+    ]
+    return Stay(
+        bill_no=f"{identity}-BILL",
+        registration_no=registration,
+        folio_no=identity,
+        guest_name=clean(form.get("guest_name")) or f"Room {room}",
+        room_no=room,
+        departure_date=check_out,
+        check_in_date=check_in,
+        check_out_date=check_out,
+        number_of_pax=1,
+        number_of_nights=nights,
+        rate_type=rate_type,
+        tariff_before_tax=amount,
+        tax_amount=Decimal("0"),
+        food_amount=Decimal("0"),
+        bar_amount=Decimal("0"),
+        laundry_amount=Decimal("0"),
+        call_amount=Decimal("0"),
+        misc_amount=Decimal("0"),
+        total_amount=amount,
+        amount_paid=amount,
+        payment_method=payment_method,
+        flags=flags,
+    )
 
 
 def historical_summary(stays: list[Stay], fee_rate: Decimal, selected_year: int | None = None) -> dict:
@@ -1360,6 +1454,7 @@ PAGE = r"""<!doctype html>
 <title>KL Guest Hotel Sales</title>
 <style>
 select{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;font:inherit;background:#fff}.toolbar select{max-width:180px}
+textarea{width:100%;min-height:94px;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;font:inherit;resize:vertical}
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:#f2f6fb;color:#071a36}*{box-sizing:border-box}html,body{height:100%;overflow:hidden}body{margin:0}.app{height:100vh;display:grid;grid-template-columns:278px minmax(0,1fr);overflow:hidden}.sidebar{background:#12233b;color:#fff;padding:28px 18px;display:flex;flex-direction:column;overflow:hidden}.brand{display:flex;gap:14px;align-items:center;margin-bottom:30px}.logo{width:48px;height:48px;border-radius:9px;background:#fff;color:#0d3265;display:grid;place-items:center;font-weight:900}.brand span{display:block;color:#b5cae8;font-size:13px}.nav-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8aa6c8;font-weight:900}.nav{display:grid;gap:8px;margin-top:12px}.nav button{background:transparent;color:#b8d0ee;text-align:left;border:0;padding:14px;border-radius:8px;font-size:17px;cursor:pointer}.nav button.active{background:#1d3a60;color:#fff}.account{border-top:1px solid #314966;margin-top:auto;padding-top:28px;display:flex;gap:12px;align-items:center}.avatar{width:42px;height:42px;border-radius:999px;background:#3478d4;display:grid;place-items:center;font-weight:900}.main{min-width:0;overflow-y:auto;padding:28px 34px 42px}.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px}.eyebrow{margin:0 0 8px;color:#7587a0;text-transform:uppercase;letter-spacing:.14em;font-size:13px;font-weight:900}h1{font-size:32px;margin:0}h2{font-size:20px;margin:0}.badge{background:#e8f1fd;color:#1c5a9d;border-radius:999px;padding:9px 16px;font-weight:900;font-size:13px}.notice{background:#e8f2ff;border:1px solid #bdd6fb;color:#0b4f9a;border-radius:9px;padding:16px 18px;margin-bottom:18px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.metric,.panel{background:#fff;border:1px solid #d7e0eb;border-radius:10px;box-shadow:0 8px 24px rgba(10,31,68,.04)}.metric{padding:16px}.metric span{display:block;color:#71839c;font-size:13px}.metric strong{display:block;margin-top:4px;font-size:22px}.panel{padding:22px;margin-bottom:18px}.drop{height:118px;border:1.5px dashed #9cb9dc;border-radius:9px;background:#f8fbff;display:grid;place-items:center;text-align:center;color:#1b5fab;font-weight:900;cursor:pointer}.drop.drag{background:#e8f2ff;border-color:#1b5fab}.drop small{display:block;color:#71839c;font-weight:600;margin-top:5px}.drop input{display:none}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:14px 0;flex-wrap:wrap}.toolbar input{max-width:320px}.filters,.report-controls{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:0 0 14px}.filters button{border:1px solid #c7d7ea;background:#fff;color:#1a4f8d;border-radius:7px;padding:9px 12px;font-weight:900;cursor:pointer}.filters button.active{background:#1d5fa7;color:#fff;border-color:#1d5fa7}.filters input{width:150px}.report-controls label{min-width:190px}.settings-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}label{display:grid;gap:7px;font-size:13px;font-weight:800;color:#2f4360}input{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;font:inherit}button.primary{border:0;border-radius:8px;background:#10233e;color:#fff;font-weight:900;padding:12px 18px;cursor:pointer}button.primary:disabled{opacity:.45;cursor:not-allowed}.view{display:none}.view.active{display:block}.table-wrap{overflow:auto;border:1px solid #dde6f1;border-radius:8px;background:#fff}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 12px;border-bottom:1px solid #e7edf5;text-align:left;white-space:nowrap}th{background:#f5f8fc;color:#516985;font-size:12px;text-transform:uppercase;letter-spacing:.05em}.day-row td{background:#edf4fc;color:#153a63;font-weight:900;font-size:14px}.multi td{background:#fff7dd}.paid-continuation td{background:#eaf8ef;color:#16633a}.paid-pill{display:inline-block;background:#dff5e8;color:#16633a;border:1px solid #a9dfbf;border-radius:999px;padding:4px 9px;font-weight:900}.review-reason{color:#9b2c2c;font-weight:900}.empty{color:#71839c;padding:22px;border:1px dashed #c9d8ea;border-radius:8px;background:#f9fbfe}.report-grid{display:grid;grid-template-columns:1fr;gap:18px}.wide{grid-column:span 2}@media(max-width:1050px){.app{grid-template-columns:1fr}.sidebar{display:none}.cards,.settings-grid{grid-template-columns:1fr}.main{padding:20px}.top{flex-direction:column;gap:12px}}
 </style>
 </head>
@@ -1370,6 +1465,7 @@ select{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;f
     <div class="nav-label">Workspace</div>
     <nav class="nav">
       <button data-view="dashboard" class="active">Dashboard</button>
+      <button data-view="manual">Manual Check-In</button>
       <button data-view="historical">Historical</button>
       <button data-view="b">Laporan B</button>
       <button data-view="c">Laporan C</button>
@@ -1394,6 +1490,22 @@ select{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;f
       <div class="panel"><div class="toolbar"><h2>Daily sales ledger</h2><input id="search" placeholder="Search guest or room"></div><div class="filters"><button data-range="today">Today</button><button data-range="last7">Last 7 days</button><button data-range="month" class="active">This month</button><button data-range="custom">Custom date</button><input id="startDate" type="date"><input id="endDate" type="date"></div><div id="ledger" class="empty">No imported check-ins yet.</div></div>
       <div class="panel"><h2>Sales reports</h2><br><div id="analytics" class="empty">Import Excel first.</div></div>
     </section>
+    <section id="manual" class="view">
+      <div class="panel"><div class="toolbar"><h2>Manual daily check-in</h2><button class="primary" id="saveManual">Save check-in</button></div><div class="settings-grid">
+        <label>Room<input id="manualRoom" class="manual" name="room" placeholder="305"></label>
+        <label>Guest name<input id="manualGuest" class="manual" name="guest_name" placeholder="Walk-in guest"></label>
+        <label>Registration<select id="manualRegistration" class="manual" name="registration"><option>walk in</option><option>online</option><option>extension</option></select></label>
+        <label>Stay type<select id="manualStayType" class="manual" name="stay_type"><option value="night">Night stay</option><option value="3_hour">3 hour stay</option></select></label>
+        <label>Stay duration<input id="manualDuration" class="manual" name="stay_duration" type="number" min="1" step="1" value="1"></label>
+        <label>Check-in date<input id="manualCheckIn" class="manual" name="check_in_date" type="date"></label>
+        <label>Check-out date<input id="manualCheckOut" class="manual" name="check_out_date" type="date"></label>
+        <label>Room payment (RM)<input id="manualAmount" class="manual" name="amount_paid" type="number" step="0.01"></label>
+        <label>Payment method<select id="manualPayment" class="manual" name="payment_method"><option value="cash">Cash</option><option value="qr">QR</option><option value="card">Card</option><option value="online">Online</option><option value="transfer">Transfer</option></select></label>
+        <label>Kelestarian payment<select id="manualKelestarianPayment" class="manual" name="kelestarian_payment_method"><option value="cash">Cash</option><option value="qr">QR</option><option value="online">Online</option><option value="transfer">Transfer</option></select></label>
+        <label>Deposit (RM)<input id="manualDeposit" class="manual" name="deposit_amount" type="number" step="0.01" value="50.00"></label>
+        <label>Deposit payment<select id="manualDepositPayment" class="manual" name="deposit_payment_method"><option value="cash">Cash</option><option value="qr">QR</option></select></label>
+      </div><br><div id="manualPreview" class="empty">Key in the room to preview the default charges.</div></div>
+    </section>
     <section id="historical" class="view">
       <div class="panel"><div class="toolbar"><h2>Historical sales insights</h2><div class="toolbar"><select id="historicalYear"></select><button class="primary" id="loadHistorical">Load history</button></div></div><div id="historicalPanel" class="empty">Select a year to review sales history, payment trends, guest memory, forecasts, archive batches, and data quality.</div></div>
     </section>
@@ -1416,6 +1528,9 @@ select{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;f
         <label>No. Telefon / Emel<input name="contact" class="setting" value="012-205-0039 / hueyjiunphang@gmail.com"></label>
         <label>Fi per bilik/malam (RM)<input name="fee_rate" class="setting" type="number" step="0.01" value="5.00"></label>
         <label class="wide">Alamat Premis Penginapan<input name="address" class="setting" value="8, Jalan AU 1a/4c, Taman Keramat Permai, 54200 Kuala Lumpur, Federal Territory of Kuala Lumpur"></label>
+        <label class="wide">Room rates JSON<textarea name="room_rates" class="setting">{"default":100,"3_hour_default":50}</textarea></label>
+        <label class="wide">Registration adjustments JSON<textarea name="registration_adjustments" class="setting">{"walk in":0,"online":0,"extension":0}</textarea></label>
+        <label class="wide">Payment method adjustments JSON<textarea name="payment_adjustments" class="setting">{"cash":0,"qr":0,"card":0,"online":0,"transfer":0}</textarea></label>
       </div></div>
     </section>
   </section>
@@ -1433,11 +1548,19 @@ function settings(){let o={};qa(".setting").forEach(i=>o[i.name]=i.value);return
 function asMoney(v){return Number(String(v||"0").replace(/,/g,""))||0}
 function html(v){return String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
 function iso(d){let z=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate())}
+function jsonSetting(name,fallback){try{return JSON.parse(settings()[name]||"")}catch{return fallback}}
+function todayIso(){return iso(new Date())}
+function paymentLabel(v){return ({cash:"Cash",qr:"QR",card:"Card",online:"Online",transfer:"Transfer"}[v]||v)}
+function manualBaseRate(){let rates=jsonSetting("room_rates",{default:100,3_hour_default:50}),room=q("#manualRoom").value.trim(),stayType=q("#manualStayType").value;if(stayType==="3_hour")return asMoney(rates[room+"_3_hour"]??rates["3_hour_default"]??rates[room]??rates.default);return asMoney(rates[room]??rates.default)}
+function manualComputedAmount(){let base=manualBaseRate(),registration=q("#manualRegistration").value,payment=q("#manualPayment").value,reg=jsonSetting("registration_adjustments",{}),pay=jsonSetting("payment_adjustments",{});return Math.max(0,base+asMoney(reg[registration])+asMoney(pay[payment]))}
+function syncManualDates(){let start=q("#manualCheckIn").value||todayIso(),stayType=q("#manualStayType").value,duration=Math.max(1,Number(q("#manualDuration").value||1));q("#manualCheckIn").value=start;if(stayType==="3_hour"){q("#manualDuration").value=1;q("#manualDuration").disabled=true}else{q("#manualDuration").disabled=false}let d=new Date(start+"T00:00:00");d.setDate(d.getDate()+(stayType==="3_hour"?0:duration));q("#manualCheckOut").value=iso(d)}
+function syncManualPayments(){let payment=q("#manualPayment").value;if(payment!=="card")q("#manualKelestarianPayment").value=payment;if(payment==="cash"||payment==="qr")q("#manualDepositPayment").value=payment;if(!q("#manualAmount").dataset.manual)q("#manualAmount").value=manualComputedAmount().toFixed(2);let kel=asMoney(settings().fee_rate||"5.00")*Math.max(1,Number(q("#manualDuration").value||1)),deposit=asMoney(q("#manualDeposit").value||"50");q("#manualPreview").className="";q("#manualPreview").innerHTML=`Room charge RM ${asMoney(q("#manualAmount").value).toFixed(2)} · Kelestarian RM ${kel.toFixed(2)} (${paymentLabel(q("#manualKelestarianPayment").value)}) · Deposit RM ${deposit.toFixed(2)} (${paymentLabel(q("#manualDepositPayment").value)})`}
+function syncManualForm(){syncManualDates();syncManualPayments()}
 function rangeBounds(){let now=new Date(),start=new Date(now),end=new Date(now);start.setHours(0,0,0,0);end.setHours(0,0,0,0);if(rangeMode==="last7"){start.setDate(start.getDate()-6)}else if(rangeMode==="month"){start=new Date(now.getFullYear(),now.getMonth(),1);end=new Date(now.getFullYear(),now.getMonth()+1,0)}else if(rangeMode==="custom"){let s=q("#startDate").value,e=q("#endDate").value;return {start:s||"0000-01-01",end:e||"9999-12-31"}}return {start:iso(start),end:iso(end)}}
 function dataBounds(){let dates=sales.map(r=>r.date).filter(Boolean).sort();return dates.length?{start:dates[0],end:dates.at(-1)}:null}
 function showImportedRange(bounds){bounds=bounds||dataBounds();if(!bounds)return "";rangeMode="custom";q("#startDate").value=bounds.start;q("#endDate").value=bounds.end;localStorage.setItem("rangeMode",rangeMode);localStorage.setItem("startDate",bounds.start);localStorage.setItem("endDate",bounds.end);return ` Showing ${bounds.start.split("-").reverse().join("/")} to ${bounds.end.split("-").reverse().join("/")}.`}
 function visibleRows(){let bounds=rangeBounds(),term=q("#search").value.toLowerCase();return sales.filter(r=>r.date>=bounds.start&&r.date<=bounds.end).filter(r=>(String(r.guest_name||"")+" "+String(r.room_no||"")).toLowerCase().includes(term))}
-function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Stay</th><th>Amount Paid</th><th>Kelestarian</th><th>Payment</th><th>Rate Type</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{let paid=r.is_paid_continuation?`<span class="paid-pill">${r.payment_status||("Paid on "+(r.display_date||""))}</span>`:`RM ${r.price||"0.00"}`;let fee=r.is_paid_continuation?"":`RM ${r.kelestarian||"0.00"}`;if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="7">${cur}</td></tr>`}html+=`<tr class="${r.is_paid_continuation?'paid-continuation':(r.multi_night?'multi':'')}"><td>${r.room_no||''}</td><td>${r.guest_name||''}</td><td>${r.stay_progress||''}</td><td>${paid}</td><td>${fee}</td><td>${r.payment_method||''}</td><td>${r.rate_type||''}</td></tr>`});return html+'</tbody></table></div>'}
+function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Stay</th><th>Amount Paid</th><th>Kelestarian</th><th>K Pay</th><th>Deposit</th><th>Deposit Pay</th><th>Payment</th><th>Rate Type</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{let paid=r.is_paid_continuation?`<span class="paid-pill">${r.payment_status||("Paid on "+(r.display_date||""))}</span>`:`RM ${r.price||"0.00"}`;let fee=r.is_paid_continuation?"":`RM ${r.kelestarian||"0.00"}`;let deposit=r.deposit?`RM ${r.deposit}`:"";if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="10">${cur}</td></tr>`}html+=`<tr class="${r.is_paid_continuation?'paid-continuation':(r.multi_night?'multi':'')}"><td>${r.room_no||''}</td><td>${r.guest_name||''}</td><td>${r.stay_progress||''}</td><td>${paid}</td><td>${fee}</td><td>${r.kelestarian_payment_method||''}</td><td>${deposit}</td><td>${r.deposit_payment_method||''}</td><td>${r.payment_method||''}</td><td>${r.rate_type||''}</td></tr>`});return html+'</tbody></table></div>'}
 function table(rows,heads,mapper){return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+rows.map(mapper).join('')+'</tbody></table></div>'}
 function collectionBreakdown(rows){let map={};rows.filter(r=>!r.is_paid_continuation).forEach(r=>{let key=r.payment_method||"Unknown";map[key]??={payment_method:key,bills:0,amount:0,kelestarian:0};map[key].bills++;map[key].amount+=asMoney(r.price);map[key].kelestarian+=asMoney(r.kelestarian)});return Object.values(map).sort((a,b)=>b.amount-a.amount)}
 function renderHistorical(data){let el=q("#historicalPanel");if(!data||!data.summary){el.className='empty';el.innerHTML='No historical data loaded.';return}let h=data.summary,batches=data.archive_batches||[],picker=q("#historicalYear"),years=h.available_years||[],selected=h.selected_year||(years.at(-1)||'');if(picker&&years.length){picker.innerHTML=years.map(y=>`<option value="${y}">${y}</option>`).join('');picker.value=selected;localStorage.setItem("historicalYear",selected)}el.className='';el.innerHTML='<div class="cards"><article class="metric"><span>Historical stays '+selected+'</span><strong>'+Number(h.historical_stays||0).toLocaleString()+'</strong></article><article class="metric"><span>Historical revenue '+selected+'</span><strong>RM '+(h.total_revenue||'0.00')+'</strong></article><article class="metric"><span>Room nights '+selected+'</span><strong>'+Number(h.total_nights||0).toLocaleString()+'</strong></article><article class="metric"><span>2026 estimate</span><strong>RM '+(h.forecast_2026_kelestarian||'0.00')+'</strong></article></div><h2>'+selected+' sales</h2><br>'+table(h.yearly_revenue||[],['Year','Stays','Nights','Revenue'],r=>`<tr><td>${r.year}</td><td>${Number(r.stays).toLocaleString()}</td><td>${Number(r.nights).toLocaleString()}</td><td>RM ${r.revenue}</td></tr>`)+'<br><h2>Monthly trend '+selected+'</h2><br>'+table(h.monthly_revenue||[],['Month','Stays','Nights','Revenue'],r=>`<tr><td>${r.month}</td><td>${Number(r.stays).toLocaleString()}</td><td>${Number(r.nights).toLocaleString()}</td><td>RM ${r.revenue}</td></tr>`)+'<br><h2>Payment categories '+selected+'</h2><br>'+table(h.payment_categories||[],['Payment','Bills','Amount'],r=>`<tr><td>${r.payment_method}</td><td>${Number(r.count).toLocaleString()}</td><td>RM ${r.total_amount}</td></tr>`)+'<br><h2>Guest memory '+selected+'</h2><br>'+table(h.top_guests||[],['Guest','Stays','Nights','Spend','First','Latest'],r=>`<tr><td>${html(r.guest_name)}</td><td>${r.stays}</td><td>${r.nights}</td><td>RM ${r.total_amount}</td><td>${r.first}</td><td>${r.latest}</td></tr>`)+'<br><h2>Data quality issues '+selected+'</h2><br>'+((h.data_quality_issues||[]).length?table(h.data_quality_issues||[],['Bill','Guest','Room','Issue'],r=>`<tr><td>${html(r.bill_no)}</td><td>${html(r.guest_name)}</td><td>${html(r.room_no)}</td><td>${html((r.flags||[]).join(', '))}</td></tr>`):'<div class="empty">No historical data quality issues found for '+selected+'.</div>')+'<br><h2>Import archive</h2><br>'+table(batches.slice(0,80),['File','Imported','Stays','Revenue','Kelestarian'],r=>`<tr><td>${html(r.source_filename)}</td><td>${html(String(r.imported_at||'').slice(0,19).replace('T',' '))}</td><td>${Number(r.stay_count||0).toLocaleString()}</td><td>RM ${asMoney(r.total_sales).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${asMoney(r.total_kelestarian).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`)}
@@ -1448,12 +1571,14 @@ function selectedCheckIns(kind){let rows=sales.filter(r=>!r.is_paid_continuation
 function renderReviewQueue(){let el=q("#reviewQueue");el.className=reviewQueue.length?'':'empty';el.innerHTML=reviewQueue.length?table(reviewQueue,['Folio No.','Incoming Bill','Existing Bill','Guest','Reason','Source'],r=>`<tr><td>${html(r.folio_no)}</td><td>${html(r.incoming_bill_no)}</td><td>${html(r.existing_bill_no)}</td><td>${html((r.incoming_record||{}).guest_name)}</td><td class="review-reason">${html(String(r.reason||'').replaceAll('_',' '))}</td><td>${html(r.source_filename)}</td></tr>`):'No records need manual review.'}
 function render(){setReportDefaults();qa(".filters button").forEach(b=>b.classList.toggle("active",b.dataset.range===rangeMode));let filtered=visibleRows();let visibleSales=filtered.reduce((t,r)=>t+asMoney(r.price),0),visibleFee=filtered.reduce((t,r)=>t+asMoney(r.kelestarian),0);q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=filtered.length;q("#mSales").textContent='RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#mFee").textContent='RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let bSelected=selectedCheckIns('b'),byDay={};bSelected.forEach(r=>{byDay[r.display_date]??={rooms:0,nights:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].nights+=Number(r.nights||0);byDay[r.display_date].fee+=asMoney(r.kelestarian)});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Jumlah Bilik','Bilangan Malam','Jumlah Kutipan'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.nights}</td><td>RM ${r.fee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'No check-ins in the selected month.';let cSelected=selectedCheckIns('c');q("#previewC").className=cSelected.length?'':'empty';q("#previewC").innerHTML=cSelected.length?groupRows(cSelected):'No check-ins in the selected date range.';let analytics=q("#analytics"),collections=collectionBreakdown(filtered);if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Collected in range</span><strong>RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Kelestarian in range</span><strong>RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Collection methods</span><strong>'+collections.length+'</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div><h2>Payment collection methods</h2><br>'+ (collections.length?table(collections,['Payment Method','Bills','Collected','Kelestarian'],r=>`<tr><td>${r.payment_method}</td><td>${r.bills}</td><td>RM ${r.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${r.kelestarian.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'<div class="empty">No collections in this date range.</div>') + '<br><h2>Revenue by rate type</h2><br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
 async function importFile(file){q("#dropText").innerHTML=html(file.name)+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';q("#dropText").innerHTML=html(file.name)+'<small>Import failed</small>';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));let rangeNote=showImportedRange(data.import_start&&data.import_end?{start:data.import_start,end:data.import_end}:null);let savedNote=data.saved?`${data.inserted_count||0} new, ${data.updated_count||0} updated`:`${data.accepted_count||0} parsed`;let message=`Imported ${summary.stays} stays. ${savedNote}.`+rangeNote;if(data.merged_duplicate_count)message+=` ${data.merged_duplicate_count} duplicate row(s) merged.`;if(data.review_count)message+=` ${data.review_count} item(s) logged for review.`;if(data.review_error)message+=` Manual Review warning: ${data.review_error}`;if(data.save_error)message+=` Database warning: ${data.save_error}`;q("#notice").textContent=message;q("#dropText").innerHTML=html(file.name)+'<small>Imported</small>';render();loadReviewQueue()}
+async function saveManualCheckIn(){syncManualForm();let fd=new FormData();qa(".manual").forEach(i=>fd.append(i.name,i.value));fd.append("fee_rate",settings().fee_rate||"5.00");let res=await fetch('/api/manual-checkin',{method:'POST',body:fd}),data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Manual check-in failed.';return}q("#notice").textContent=`Manual check-in saved for room ${html(q("#manualRoom").value)}.`;q("#manualRoom").value="";q("#manualGuest").value="";q("#manualAmount").dataset.manual="";q("#manualAmount").value="";syncManualForm();await loadHistory(rangeBounds());loadReviewQueue()}
 async function loadHistory(bounds=null){let params=new URLSearchParams({fee_rate:settings().fee_rate||'5.00'});if(bounds){params.set('start',bounds.start);params.set('end',bounds.end)}let res=await fetch('/api/history?'+params.toString());let data=await res.json();if(!res.ok||!data.enabled){q("#notice").textContent=data.error||'Saved stays are not available.';return}stays=data.stays||[];sales=data.sales||[];summary=data.summary||{};localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));let rangeNote=visibleRows().length?"":showImportedRange();q("#notice").textContent=`Loaded ${summary.stays||0} saved stays from Supabase.`+rangeNote;render()}
 async function loadHistorical(){let year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025";q("#historicalPanel").className='empty';q("#historicalPanel").innerHTML='Loading '+year+' historical data...';let url='/api/historical?fee_rate='+(settings().fee_rate||'5.00')+'&year='+encodeURIComponent(year);let res=await fetch(url);let data=await res.json();if(!res.ok||!data.enabled){q("#historicalPanel").innerHTML=data.error||'Historical data is not available.';return}renderHistorical(data)}
 async function loadReviewQueue(){let res=await fetch('/api/review-queue'),data=await res.json();reviewQueue=res.ok&&data.enabled?(data.records||[]):[];renderReviewQueue()}
 async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));if(kind==='b'){let month=q("#reportMonthB").value;if(!month){q("#notice").textContent='Select a month for Lampiran B.';return}fd.append('report_month',month)}else{let month=q("#reportMonthC").value;if(month){syncReportMonthC();fd.append('report_month',month)}let start=q("#reportStartC").value,end=q("#reportEndC").value;if(!month&&(!start||!end)){q("#notice").textContent='Select a month or date range for Lampiran C.';return}if(start&&end&&start>end){q("#notice").textContent='Lampiran C first date must not be after the last date.';return}if(!month){fd.append('report_start',start);fd.append('report_end',end)}}Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran B.pdf':'Lampiran C.pdf');a.click();URL.revokeObjectURL(url)}
 qa(".nav button").forEach(b=>b.onclick=()=>{qa(".nav button").forEach(x=>x.classList.remove('active'));b.classList.add('active');qa(".view").forEach(v=>v.classList.remove('active'));q("#"+b.dataset.view).classList.add('active');q("#pageTitle").textContent=b.textContent});
 q("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);q("#search").oninput=render;q("#downloadB").onclick=()=>download('b');q("#downloadC").onclick=()=>download('c');
+q("#saveManual").onclick=saveManualCheckIn;
 q("#refreshReview").onclick=loadReviewQueue;
 q("#loadHistorical").onclick=loadHistorical;
 q("#historicalYear").onchange=loadHistorical;
@@ -1463,8 +1588,11 @@ q("#startDate").value=localStorage.getItem("startDate")||"";q("#endDate").value=
 q("#reportMonthB").onchange=()=>{localStorage.setItem("reportMonthB",q("#reportMonthB").value);render()};
 ["#reportStartC","#reportEndC"].forEach(id=>q(id).onchange=()=>{q("#reportMonthC").value="";localStorage.removeItem("reportMonthC");localStorage.setItem("reportCMode","custom");localStorage.setItem(id.slice(1),q(id).value);render()});
 q("#reportMonthC").onchange=()=>{localStorage.setItem("reportCMode","month");localStorage.setItem("reportMonthC",q("#reportMonthC").value);syncReportMonthC();render()};
+["#manualRoom","#manualRegistration","#manualStayType","#manualDuration","#manualCheckIn","#manualPayment","#manualKelestarianPayment","#manualDepositPayment","#manualDeposit"].forEach(id=>q(id).oninput=syncManualForm);
+q("#manualAmount").oninput=()=>{q("#manualAmount").dataset.manual="1";syncManualPayments()};
 let drop=q("#drop");['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])importFile(e.dataTransfer.files[0])});
 qa(".setting").forEach(i=>{i.value=localStorage.getItem('set_'+i.name)||i.value;i.oninput=()=>localStorage.setItem('set_'+i.name,i.value)});
+q("#manualCheckIn").value=todayIso();syncManualForm();
 render();
 if(!stays.length)loadHistory();
 loadReviewQueue();
@@ -1508,6 +1636,33 @@ def api_import():
             "dashboard_count": len(dashboard_stays),
             "import_start": import_dates[0] if import_dates else "",
             "import_end": import_dates[-1] if import_dates else "",
+            **save_result,
+            "save_error": save_error,
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/manual-checkin")
+def api_manual_checkin():
+    try:
+        fee_rate = dec(request.form.get("fee_rate", "5.00"))
+        stay = manual_stay_from_form(request.form)
+        stays = [stay]
+        sales = expanded_sales(stays, fee_rate)
+        summary_data = summary(stays, fee_rate)
+        save_result = {"saved": False, "accepted_count": 1, "review_count": 0}
+        save_error = ""
+        try:
+            save_result = save_import_to_supabase("Manual daily check-in", stays, sales, summary_data)
+        except Exception as exc:
+            save_error = str(exc)
+        if supabase_configured() and save_error:
+            return jsonify({"error": f"Manual check-in was not saved: {save_error}"}), 500
+        return jsonify({
+            "stays": [stay_record(stay)],
+            "sales": ledger_sales(stays, fee_rate),
+            "summary": summary_data,
             **save_result,
             "save_error": save_error,
         })
