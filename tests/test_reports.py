@@ -90,6 +90,8 @@ def test_reporting_settings_include_default_contact_details():
     assert 'data-view="manual">Manual Check-In' in PAGE
     assert 'id="manualRoom"' in PAGE
     assert 'Room rates JSON' in PAGE
+    assert '"3_hour_default":50' in PAGE
+    assert "3_hour_default:50" not in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE
     assert 'id="reportMonthC" type="month"' in PAGE
     assert 'id="reportStartC" type="date"' in PAGE
