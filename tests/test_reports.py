@@ -217,3 +217,25 @@ def test_import_response_shows_only_verified_database_rows_after_save(monkeypatc
     payload = response.get_json()
     assert [item["guest_name"] for item in payload["stays"]] == ["VERIFIED GUEST"]
     assert "REJECTED MISMATCH" not in {item["guest_name"] for item in payload["stays"]}
+
+
+def test_verified_rows_patch_existing_folios_and_insert_new_without_upsert(monkeypatch):
+    calls = []
+
+    def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
+        calls.append({"method": method, "table": table, "payload": payload, "query": query, "prefer": prefer})
+
+    monkeypatch.setattr(hotel_app, "supabase_request", fake_supabase_request)
+    existing = [{"id": "row-1", "folio_no": "FN100", "bill_no": "BN100"}]
+    update_row = {"folio_no": "FN100", "bill_no": "BN100", "guest_name": "UPDATED"}
+    insert_row = {"folio_no": "FN101", "bill_no": "BN101", "guest_name": "NEW"}
+
+    hotel_app.save_verified_stay_rows([update_row, insert_row], existing)
+
+    assert calls[0]["method"] == "PATCH"
+    assert calls[0]["table"] == "guest_stays"
+    assert calls[0]["query"] == {"id": "eq.row-1"}
+    assert calls[1]["method"] == "POST"
+    assert calls[1]["table"] == "guest_stays"
+    assert calls[1]["payload"] == [insert_row]
+    assert calls[1]["query"] is None
