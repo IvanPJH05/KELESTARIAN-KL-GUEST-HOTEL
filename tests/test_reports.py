@@ -239,3 +239,46 @@ def test_verified_rows_patch_existing_folios_and_insert_new_without_upsert(monke
     assert calls[1]["table"] == "guest_stays"
     assert calls[1]["payload"] == [insert_row]
     assert calls[1]["query"] is None
+
+
+def test_verified_rows_patch_existing_bill_when_database_has_bill_constraint(monkeypatch):
+    calls = []
+
+    def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
+        calls.append({"method": method, "table": table, "payload": payload, "query": query, "prefer": prefer})
+
+    monkeypatch.setattr(hotel_app, "supabase_request", fake_supabase_request)
+    existing = [{"id": "row-bill", "folio_no": "FN35634", "bill_no": "BN35634"}]
+    update_row = {"folio_no": "FN35634", "bill_no": "BN35634", "guest_name": "UPDATED"}
+
+    hotel_app.save_verified_stay_rows([update_row], existing)
+
+    assert calls == [
+        {
+            "method": "PATCH",
+            "table": "guest_stays",
+            "payload": update_row,
+            "query": {"id": "eq.row-bill"},
+            "prefer": "return=minimal",
+        }
+    ]
+
+
+def test_import_loads_existing_rows_by_incoming_folio_and_bill(monkeypatch):
+    calls = []
+
+    def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
+        calls.append(query)
+        if query and query.get("bill_no") == "in.(BN35634)":
+            return [{"id": "row-bill", "folio_no": "FN35634", "bill_no": "BN35634"}]
+        return []
+
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+    monkeypatch.setattr(hotel_app, "supabase_request", fake_supabase_request)
+    incoming = stay("GUEST", "305", "100.00", 1, folio_no="FN35634", bill_no="BN35634")
+
+    rows = hotel_app.load_matching_stays_from_supabase([incoming])
+
+    assert rows == [{"id": "row-bill", "folio_no": "FN35634", "bill_no": "BN35634"}]
+    assert {"select": "*", "folio_no": "in.(FN35634)", "limit": "1000"} in calls
+    assert {"select": "*", "bill_no": "in.(BN35634)", "limit": "1000"} in calls

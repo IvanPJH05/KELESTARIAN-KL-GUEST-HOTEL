@@ -279,6 +279,17 @@ def verification_value(value) -> str:
     return clean(value).upper()
 
 
+def unique_verification_values(values) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        normalized = verification_value(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
 def classify_verified_stays(stays: list[Stay], existing_records: list[dict]) -> tuple[list[dict], list[dict]]:
     existing_by_folio = {
         verification_value(row.get("folio_no")): row
@@ -342,10 +353,16 @@ def save_verified_stay_rows(rows: list[dict], existing_records: list[dict]) -> N
         for row in existing_records
         if verification_value(row.get("folio_no"))
     }
+    existing_by_bill = {
+        verification_value(row.get("bill_no")): row
+        for row in existing_records
+        if verification_value(row.get("bill_no"))
+    }
     inserts = []
     for row in rows:
         folio = verification_value(row.get("folio_no"))
-        existing = existing_by_folio.get(folio)
+        bill = verification_value(row.get("bill_no"))
+        existing = existing_by_folio.get(folio) or existing_by_bill.get(bill)
         if not existing:
             inserts.append(row)
             continue
@@ -372,7 +389,7 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
         prefer="return=representation",
     )
     batch_id = batch[0]["id"] if batch else None
-    existing_records = load_stays_from_supabase()
+    existing_records = load_matching_stays_from_supabase(stays)
     rows, reviews = classify_verified_stays(stays, existing_records)
     for row in rows:
         row["import_batch_id"] = batch_id
@@ -410,6 +427,33 @@ def load_stays_from_supabase() -> list[dict]:
             "limit": "10000",
         },
     ) or []
+
+
+def load_matching_stays_from_supabase(stays: list[Stay]) -> list[dict]:
+    if not supabase_configured():
+        return []
+    found = {}
+    lookups = [
+        ("folio_no", unique_verification_values(stay.folio_no for stay in stays)),
+        ("bill_no", unique_verification_values(stay.bill_no for stay in stays)),
+    ]
+    for column, values in lookups:
+        for index in range(0, len(values), 100):
+            chunk = values[index : index + 100]
+            if not chunk:
+                continue
+            rows = supabase_request(
+                "GET",
+                "guest_stays",
+                query={
+                    "select": "*",
+                    column: "in.(" + ",".join(chunk) + ")",
+                    "limit": "1000",
+                },
+            ) or []
+            for row in rows:
+                found[row.get("id") or record_identity(row)] = row
+    return list(found.values())
 
 
 def load_review_queue_from_supabase() -> list[dict]:
