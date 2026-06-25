@@ -511,25 +511,24 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
             continue
         updated += 1
         rows_to_insert.append(row)
-        for index, matched in enumerate(matches):
+        for matched in matches[1:]:
             matched_id = matched.get("id")
             if not matched_id:
                 continue
-            if index > 0:
-                reviews.append(
-                    {
-                        "review_key": f"existing-duplicate-merged|{matched_id}",
-                        "folio_no": row.get("folio_no"),
-                        "incoming_bill_no": row.get("bill_no"),
-                        "existing_folio_no": matched.get("folio_no"),
-                        "existing_bill_no": matched.get("bill_no"),
-                        "reason": "EXISTING_DUPLICATE_MERGED",
-                        "incoming_record": row,
-                        "existing_record": matched,
-                        "status": "pending",
-                    }
-                )
-                merged_duplicates += 1
+            reviews.append(
+                {
+                    "review_key": f"existing-duplicate-merged|{matched_id}",
+                    "folio_no": row.get("folio_no"),
+                    "incoming_bill_no": row.get("bill_no"),
+                    "existing_folio_no": matched.get("folio_no"),
+                    "existing_bill_no": matched.get("bill_no"),
+                    "reason": "EXISTING_DUPLICATE_MERGED",
+                    "incoming_record": row,
+                    "existing_record": matched,
+                    "status": "pending",
+                }
+            )
+            merged_duplicates += 1
             row_ids_to_delete.append(matched_id)
             existing_by_id.pop(matched_id, None)
     for index in range(0, len(row_ids_to_delete), 100):
