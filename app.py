@@ -1256,7 +1256,9 @@ def api_import():
         response_stays = stays
         if save_result.get("saved") and not save_error:
             verified_records = load_stays_from_supabase()
-            response_stays = records_to_stays(verified_records) if verified_records else []
+            incoming_records = [stay_record(stay) for stay in stays] if save_result.get("accepted_count", 0) else []
+            merged_records = merge_stay_records(verified_records, incoming_records) if incoming_records else verified_records
+            response_stays = records_to_stays(merged_records) if merged_records else []
             sales = expanded_sales(response_stays, fee_rate)
             summary_data = summary(response_stays, fee_rate)
         return jsonify({
