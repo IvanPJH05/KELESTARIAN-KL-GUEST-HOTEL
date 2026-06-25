@@ -455,11 +455,11 @@ def test_manual_checkin_endpoint_saves_deposit_and_payment_metadata(monkeypatch)
     assert saved.room_no == "305"
     assert saved.number_of_nights == 3
     assert saved.payment_method == "Card"
-    assert "KELESTARIAN_PAYMENT:Cash" in saved.flags
-    assert "DEPOSIT_PAYMENT:Cash" in saved.flags
+    assert "KELESTARIAN_PAYMENT:Card" in saved.flags
+    assert "DEPOSIT_PAYMENT:Card" in saved.flags
     assert payload["sales"][0]["deposit"] == "50.00"
-    assert payload["sales"][0]["kelestarian_payment_method"] == "Cash"
-    assert payload["sales"][0]["deposit_payment_method"] == "Cash"
+    assert payload["sales"][0]["kelestarian_payment_method"] == "Card"
+    assert payload["sales"][0]["deposit_payment_method"] == "Card"
 
 
 def test_verified_rows_batch_update_existing_folios_and_insert_new(monkeypatch):
