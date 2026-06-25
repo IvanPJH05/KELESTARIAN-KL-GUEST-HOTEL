@@ -86,12 +86,16 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="dashboard-custom-ledger-20260625"' in PAGE
+    assert 'APP_VERSION="manual-simple-rates-20260626"' in PAGE
     assert 'data-view="manual">Manual Check-In' in PAGE
     assert 'id="manualRoom"' in PAGE
-    assert 'Room rates JSON' in PAGE
-    assert '"3_hour_default":50' in PAGE
-    assert "3_hour_default:50" not in PAGE
+    assert 'Twin room rate (RM)' in PAGE
+    assert 'Family room rate (RM)' in PAGE
+    assert 'Family suite rate (RM)' in PAGE
+    assert 'Day use rate (RM)' in PAGE
+    assert 'Online booking is always manual price.' in PAGE
+    assert 'id="manualHistory"' in PAGE
+    assert 'Room rates JSON' not in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE
     assert 'id="reportMonthC" type="month"' in PAGE
     assert 'id="reportStartC" type="date"' in PAGE
