@@ -10,11 +10,14 @@ from app import (
     PAGE,
     Stay,
     classify_verified_stays,
+    dedupe_import_records,
     expanded_sales,
+    find_existing_matches,
     filter_stays_for_report,
     form_b_pdf,
     form_c_pdf,
     report_filename,
+    stay_record,
     summary,
 )
 
@@ -284,3 +287,22 @@ def test_import_loads_existing_rows_by_incoming_folio_and_bill(monkeypatch):
     assert rows == [{"id": "row-bill", "folio_no": "FN35634", "bill_no": "BN35634"}]
     assert {"select": "*", "folio_no": "in.(FN35634)", "limit": "1000"} in calls
     assert {"select": "*", "bill_no": "in.(BN35634)", "limit": "1000"} in calls
+def test_import_dedupe_keeps_latest_row_for_same_folio():
+    first = stay_record(stay("OLD GUEST", "501", "100.00", 1, folio_no="FN777", bill_no="BN777"))
+    second = stay_record(stay("UPDATED GUEST", "501", "120.00", 1, folio_no="fn777", bill_no="bn777"))
+    rows, reviews = dedupe_import_records([first, second])
+    assert len(rows) == 1
+    assert rows[0]["guest_name"] == "UPDATED GUEST"
+    assert rows[0]["total_amount"] == 120.0
+    assert len(reviews) == 1
+    assert reviews[0]["reason"] == "DUPLICATE_IN_UPLOAD"
+
+
+def test_existing_match_uses_folio_or_bill_and_prefers_newest_row():
+    incoming = stay_record(stay("UPDATED", "601", "150.00", 1, folio_no="FN888", bill_no="BN888"))
+    existing = [
+        {"id": "old", "folio_no": "FN888", "bill_no": "BN000", "updated_at": "2026-01-01T00:00:00Z"},
+        {"id": "new", "folio_no": "FN000", "bill_no": "BN888", "updated_at": "2026-02-01T00:00:00Z"},
+    ]
+    matches = find_existing_matches(incoming, existing)
+    assert [row["id"] for row in matches] == ["new", "old"]

@@ -266,6 +266,19 @@ def record_identity(record: dict) -> str:
     return folio or bill or f"{record.get('guest_name')}|{record.get('room_no')}|{record.get('check_in_date')}|{record.get('check_out_date')}"
 
 
+def import_identity(record: dict) -> str:
+    folio = verification_value(record.get("folio_no"))
+    bill = verification_value(record.get("bill_no"))
+    if folio:
+        return f"FOLIO:{folio}"
+    if bill:
+        return f"BILL:{bill}"
+    return "SIGNATURE:" + "|".join(
+        verification_value(record.get(key))
+        for key in ("guest_name", "room_no", "check_in_date", "check_out_date", "total_amount")
+    )
+
+
 def merge_stay_records(existing_records: list[dict], incoming_records: list[dict]) -> list[dict]:
     merged = {}
     for record in existing_records:
@@ -273,6 +286,71 @@ def merge_stay_records(existing_records: list[dict], incoming_records: list[dict
     for record in incoming_records:
         merged[record_identity(record)] = record
     return list(merged.values())
+
+
+def dedupe_import_records(records: list[dict]) -> tuple[list[dict], list[dict]]:
+    deduped = {}
+    duplicates = []
+    for record in records:
+        key = import_identity(record)
+        previous = deduped.get(key)
+        if previous:
+            duplicates.append(
+                {
+                    "review_key": f"upload-duplicate|{key}",
+                    "folio_no": record.get("folio_no"),
+                    "incoming_bill_no": record.get("bill_no"),
+                    "existing_folio_no": previous.get("folio_no"),
+                    "existing_bill_no": previous.get("bill_no"),
+                    "reason": "DUPLICATE_IN_UPLOAD",
+                    "incoming_record": record,
+                    "existing_record": previous,
+                    "status": "pending",
+                }
+            )
+        deduped[key] = record
+    return list(deduped.values()), duplicates
+
+
+def row_sort_key(record: dict) -> tuple[str, str]:
+    return (clean(record.get("updated_at")), clean(record.get("id")))
+
+
+def find_existing_matches(record: dict, existing_records: list[dict]) -> list[dict]:
+    folio = verification_value(record.get("folio_no"))
+    bill = verification_value(record.get("bill_no"))
+    matches = []
+    seen = set()
+    for existing in existing_records:
+        existing_id = existing.get("id")
+        if existing_id in seen:
+            continue
+        if folio and verification_value(existing.get("folio_no")) == folio:
+            matches.append(existing)
+            seen.add(existing_id)
+            continue
+        if bill and verification_value(existing.get("bill_no")) == bill:
+            matches.append(existing)
+            seen.add(existing_id)
+    return sorted(matches, key=row_sort_key, reverse=True)
+
+
+def queue_review_records(records: list[dict], batch_id: str | None, filename: str) -> None:
+    if not records:
+        return
+    now = datetime.utcnow().isoformat() + "Z"
+    for record in records:
+        record["import_batch_id"] = batch_id
+        record["source_filename"] = filename
+        record["updated_at"] = now
+    for index in range(0, len(records), 500):
+        supabase_request(
+            "POST",
+            "guest_stay_review_queue",
+            records[index : index + 500],
+            query={"on_conflict": "review_key"},
+            prefer="resolution=merge-duplicates",
+        )
 
 
 def verification_value(value) -> str:
@@ -401,29 +479,77 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
     )
     batch_id = batch[0]["id"] if batch else None
     existing_records = load_matching_stays_from_supabase(stays)
-    rows, reviews = classify_verified_stays(stays, existing_records)
-    for row in rows:
+    incoming_rows, reviews = dedupe_import_records([stay_record(stay) for stay in stays])
+    inserted = 0
+    updated = 0
+    merged_duplicates = 0
+    rows_to_insert = []
+    now = datetime.utcnow().isoformat() + "Z"
+    existing_by_id = {row.get("id"): row for row in existing_records if row.get("id")}
+    for row in incoming_rows:
+        row["folio_no"] = verification_value(row.get("folio_no")) or None
+        row["bill_no"] = verification_value(row.get("bill_no")) or None
         row["import_batch_id"] = batch_id
-        row["updated_at"] = datetime.utcnow().isoformat() + "Z"
-    for review in reviews:
-        review["import_batch_id"] = batch_id
-        review["source_filename"] = filename
-        review["updated_at"] = datetime.utcnow().isoformat() + "Z"
-    save_verified_stay_rows(rows, existing_records)
-    review_error = ""
-    for index in range(0, len(reviews), 500):
-        try:
-            supabase_request(
-                "POST",
-                "guest_stay_review_queue",
-                reviews[index : index + 500],
-                query={"on_conflict": "review_key"},
-                prefer="resolution=merge-duplicates",
+        row["updated_at"] = now
+        matches = find_existing_matches(row, list(existing_by_id.values()))
+        if not matches:
+            rows_to_insert.append(row)
+            continue
+        keeper = matches[0]
+        keeper_id = keeper.get("id")
+        supabase_request(
+            "PATCH",
+            "guest_stays",
+            row,
+            query={"id": f"eq.{keeper_id}"},
+            prefer="return=minimal",
+        )
+        updated += 1
+        existing_by_id[keeper_id] = {**keeper, **row, "id": keeper_id}
+        for duplicate in matches[1:]:
+            duplicate_id = duplicate.get("id")
+            if not duplicate_id:
+                continue
+            reviews.append(
+                {
+                    "review_key": f"existing-duplicate-merged|{duplicate_id}",
+                    "folio_no": row.get("folio_no"),
+                    "incoming_bill_no": row.get("bill_no"),
+                    "existing_folio_no": duplicate.get("folio_no"),
+                    "existing_bill_no": duplicate.get("bill_no"),
+                    "reason": "EXISTING_DUPLICATE_MERGED",
+                    "incoming_record": row,
+                    "existing_record": duplicate,
+                    "status": "pending",
+                }
             )
-        except Exception as exc:
-            review_error = str(exc)
-            break
-    return {"saved": True, "accepted_count": len(rows), "review_count": len(reviews), "review_error": review_error}
+            supabase_request("DELETE", "guest_stays", query={"id": f"eq.{duplicate_id}"}, prefer="return=minimal")
+            existing_by_id.pop(duplicate_id, None)
+            merged_duplicates += 1
+    for index in range(0, len(rows_to_insert), 500):
+        chunk = rows_to_insert[index : index + 500]
+        supabase_request(
+            "POST",
+            "guest_stays",
+            chunk,
+            query={"on_conflict": "folio_no"},
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+        inserted += len(chunk)
+    review_error = ""
+    try:
+        queue_review_records(reviews, batch_id, filename)
+    except Exception as exc:
+        review_error = str(exc)
+    return {
+        "saved": True,
+        "accepted_count": len(incoming_rows),
+        "inserted_count": inserted,
+        "updated_count": updated,
+        "merged_duplicate_count": merged_duplicates,
+        "review_count": len(reviews),
+        "review_error": review_error,
+    }
 
 
 def load_stays_from_supabase() -> list[dict]:
@@ -1079,7 +1205,7 @@ function setReportDefaults(){let dates=stays.map(s=>s.check_in_date).filter(Bool
 function selectedCheckIns(kind){let rows=sales.filter(r=>!r.is_paid_continuation);if(kind==='b'){let month=q("#reportMonthB").value;return rows.filter(r=>r.date.slice(0,7)===month)}let start=q("#reportStartC").value,end=q("#reportEndC").value;return rows.filter(r=>(!start||r.date>=start)&&(!end||r.date<=end))}
 function renderReviewQueue(){let el=q("#reviewQueue");el.className=reviewQueue.length?'':'empty';el.innerHTML=reviewQueue.length?table(reviewQueue,['Folio No.','Incoming Bill','Existing Bill','Guest','Reason','Source'],r=>`<tr><td>${html(r.folio_no)}</td><td>${html(r.incoming_bill_no)}</td><td>${html(r.existing_bill_no)}</td><td>${html((r.incoming_record||{}).guest_name)}</td><td class="review-reason">${html(String(r.reason||'').replaceAll('_',' '))}</td><td>${html(r.source_filename)}</td></tr>`):'No records need manual review.'}
 function render(){setReportDefaults();qa(".filters button").forEach(b=>b.classList.toggle("active",b.dataset.range===rangeMode));let filtered=visibleRows();let visibleSales=filtered.reduce((t,r)=>t+asMoney(r.price),0),visibleFee=filtered.reduce((t,r)=>t+asMoney(r.kelestarian),0);q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=filtered.length;q("#mSales").textContent='RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#mFee").textContent='RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let bSelected=selectedCheckIns('b'),byDay={};bSelected.forEach(r=>{byDay[r.display_date]??={rooms:0,nights:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].nights+=Number(r.nights||0);byDay[r.display_date].fee+=asMoney(r.kelestarian)});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Jumlah Bilik','Bilangan Malam','Jumlah Kutipan'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.nights}</td><td>RM ${r.fee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'No check-ins in the selected month.';let cSelected=selectedCheckIns('c');q("#previewC").className=cSelected.length?'':'empty';q("#previewC").innerHTML=cSelected.length?groupRows(cSelected):'No check-ins in the selected date range.';let analytics=q("#analytics"),collections=collectionBreakdown(filtered);if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Collected in range</span><strong>RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Kelestarian in range</span><strong>RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Collection methods</span><strong>'+collections.length+'</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div><h2>Payment collection methods</h2><br>'+ (collections.length?table(collections,['Payment Method','Bills','Collected','Kelestarian'],r=>`<tr><td>${r.payment_method}</td><td>${r.bills}</td><td>RM ${r.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${r.kelestarian.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'<div class="empty">No collections in this date range.</div>') + '<br><h2>Revenue by rate type</h2><br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
-async function importFile(file){q("#dropText").innerHTML=html(file.name)+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';q("#dropText").innerHTML=html(file.name)+'<small>Import failed</small>';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));let rangeNote=showImportedRange(data.import_start&&data.import_end?{start:data.import_start,end:data.import_end}:null);let message=`Imported ${summary.stays} stays. ${data.accepted_count||0} verified record(s) were saved.`+rangeNote;if(data.review_count)message+=` ${data.review_count} mismatch(es) were sent to Manual Review.`;if(data.review_error)message+=` Manual Review warning: ${data.review_error}`;if(data.save_error)message+=` Database warning: ${data.save_error}`;q("#notice").textContent=message;q("#dropText").innerHTML=html(file.name)+'<small>Imported</small>';render();loadReviewQueue()}
+async function importFile(file){q("#dropText").innerHTML=html(file.name)+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';q("#dropText").innerHTML=html(file.name)+'<small>Import failed</small>';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));let rangeNote=showImportedRange(data.import_start&&data.import_end?{start:data.import_start,end:data.import_end}:null);let savedNote=data.saved?`${data.inserted_count||0} new, ${data.updated_count||0} updated`:`${data.accepted_count||0} parsed`;let message=`Imported ${summary.stays} stays. ${savedNote}.`+rangeNote;if(data.merged_duplicate_count)message+=` ${data.merged_duplicate_count} duplicate row(s) merged.`;if(data.review_count)message+=` ${data.review_count} item(s) logged for review.`;if(data.review_error)message+=` Manual Review warning: ${data.review_error}`;if(data.save_error)message+=` Database warning: ${data.save_error}`;q("#notice").textContent=message;q("#dropText").innerHTML=html(file.name)+'<small>Imported</small>';render();loadReviewQueue()}
 async function loadHistory(){let res=await fetch('/api/history?fee_rate='+(settings().fee_rate||'5.00'));let data=await res.json();if(!res.ok||!data.enabled||!data.stays.length)return;stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));let rangeNote=visibleRows().length?"":showImportedRange();q("#notice").textContent=`Loaded ${summary.stays} saved stays from Supabase.`+rangeNote;render()}
 async function loadReviewQueue(){let res=await fetch('/api/review-queue'),data=await res.json();reviewQueue=res.ok&&data.enabled?(data.records||[]):[];renderReviewQueue()}
 async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));if(kind==='b'){let month=q("#reportMonthB").value;if(!month){q("#notice").textContent='Select a month for Lampiran B.';return}fd.append('report_month',month)}else{let start=q("#reportStartC").value,end=q("#reportEndC").value;if(!start||!end){q("#notice").textContent='Select the first and last date for Lampiran C.';return}if(start>end){q("#notice").textContent='Lampiran C first date must not be after the last date.';return}fd.append('report_start',start);fd.append('report_end',end)}Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran B.pdf':'Lampiran C.pdf');a.click();URL.revokeObjectURL(url)}
