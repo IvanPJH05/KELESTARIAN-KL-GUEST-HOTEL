@@ -132,6 +132,18 @@ def supabase_request(method: str, table: str, payload=None, query: dict | None =
         raise RuntimeError(f"Supabase request failed: {exc.code} {detail}") from exc
 
 
+def supabase_select_all(table: str, query: dict, page_size: int = 1000) -> list[dict]:
+    rows = []
+    offset = 0
+    while True:
+        page_query = {**query, "limit": str(page_size), "offset": str(offset)}
+        page = supabase_request("GET", table, query=page_query) or []
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+        offset += page_size
+
+
 def excel_rows(filename: str, data: bytes):
     lower = filename.lower()
     if lower.endswith(".xls"):
@@ -556,15 +568,13 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
 def load_stays_from_supabase() -> list[dict]:
     if not supabase_configured():
         return []
-    return supabase_request(
-        "GET",
+    return supabase_select_all(
         "guest_stays",
         query={
             "select": "*",
             "order": "check_in_date.asc,room_no.asc,guest_name.asc",
-            "limit": "10000",
         },
-    ) or []
+    )
 
 
 def load_matching_stays_from_supabase(stays: list[Stay]) -> list[dict]:
@@ -580,15 +590,13 @@ def load_matching_stays_from_supabase(stays: list[Stay]) -> list[dict]:
             chunk = values[index : index + 100]
             if not chunk:
                 continue
-            rows = supabase_request(
-                "GET",
+            rows = supabase_select_all(
                 "guest_stays",
                 query={
                     "select": "*",
                     column: "in.(" + ",".join(chunk) + ")",
-                    "limit": "1000",
                 },
-            ) or []
+            )
             for row in rows:
                 found[row.get("id") or record_identity(row)] = row
     return list(found.values())

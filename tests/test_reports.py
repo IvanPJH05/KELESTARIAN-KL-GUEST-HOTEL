@@ -285,8 +285,8 @@ def test_import_loads_existing_rows_by_incoming_folio_and_bill(monkeypatch):
     rows = hotel_app.load_matching_stays_from_supabase([incoming])
 
     assert rows == [{"id": "row-bill", "folio_no": "FN35634", "bill_no": "BN35634"}]
-    assert {"select": "*", "folio_no": "in.(FN35634)", "limit": "1000"} in calls
-    assert {"select": "*", "bill_no": "in.(BN35634)", "limit": "1000"} in calls
+    assert {"select": "*", "folio_no": "in.(FN35634)", "limit": "1000", "offset": "0"} in calls
+    assert {"select": "*", "bill_no": "in.(BN35634)", "limit": "1000", "offset": "0"} in calls
 def test_import_dedupe_keeps_latest_row_for_same_folio():
     first = stay_record(stay("OLD GUEST", "501", "100.00", 1, folio_no="FN777", bill_no="BN777"))
     second = stay_record(stay("UPDATED GUEST", "501", "120.00", 1, folio_no="fn777", bill_no="bn777"))
