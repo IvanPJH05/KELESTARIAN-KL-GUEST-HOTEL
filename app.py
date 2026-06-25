@@ -1049,15 +1049,13 @@ def api_import():
             save_result = save_import_to_supabase(upload.filename, stays, sales, summary_data)
         except Exception as exc:
             save_error = str(exc)
-        response_stays = stays
         import_dates = sorted({stay.check_out_date.isoformat() for stay in stays if stay.check_out_date})
-        if supabase_configured():
+        response_stays = stays
+        if save_result.get("saved") and not save_error:
             verified_records = load_stays_from_supabase()
-            if verified_records:
-                merged_records = merge_stay_records(verified_records, [stay_record(stay) for stay in stays])
-                response_stays = records_to_stays(merged_records)
-                sales = expanded_sales(response_stays, fee_rate)
-                summary_data = summary(response_stays, fee_rate)
+            response_stays = records_to_stays(verified_records) if verified_records else []
+            sales = expanded_sales(response_stays, fee_rate)
+            summary_data = summary(response_stays, fee_rate)
         return jsonify({
             "stays": [stay_record(s) for s in response_stays],
             "sales": sales,
