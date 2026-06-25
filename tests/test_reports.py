@@ -94,6 +94,8 @@ def test_reporting_settings_include_default_contact_details():
     assert 'Family suite rate (RM)' in PAGE
     assert 'Day use rate (RM)' in PAGE
     assert 'Online booking is always manual price.' in PAGE
+    assert 'Online Booking' in PAGE
+    assert 'Bank Transfer' in PAGE
     assert 'id="manualHistory"' in PAGE
     assert 'Room rates JSON' not in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE

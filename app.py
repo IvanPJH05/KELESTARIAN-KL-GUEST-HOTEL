@@ -1503,9 +1503,9 @@ textarea{width:100%;min-height:94px;border:1px solid #c9d5e3;border-radius:7px;p
         <label>Stay type<select id="manualStayType" class="manual" name="stay_type"><option value="night">Night</option><option value="3_hour">Day use</option></select></label>
         <label>Stay duration<input id="manualDuration" class="manual" name="stay_duration" type="number" min="1" step="1" value="1"></label>
         <label>Room payment (RM)<input id="manualAmount" class="manual" name="amount_paid" type="number" step="0.01"></label>
-        <label>Payment method<select id="manualPayment" class="manual" name="payment_method"><option value="cash">Cash</option><option value="qr">QR</option><option value="card">Card</option><option value="online">Online</option><option value="transfer">Transfer</option></select></label>
-        <label>Kelestarian payment<select id="manualKelestarianPayment" class="manual" name="kelestarian_payment_method"><option value="cash">Cash</option><option value="qr">QR</option><option value="card">Card</option><option value="online">Online</option><option value="transfer">Transfer</option></select></label>
-        <label>Deposit payment<select id="manualDepositPayment" class="manual" name="deposit_payment_method"><option value="cash">Cash</option><option value="qr">QR</option><option value="card">Card</option><option value="online">Online</option><option value="transfer">Transfer</option></select></label>
+        <label>Payment method<select id="manualPayment" class="manual" name="payment_method"><option value="cash">Cash</option><option value="qr">QR</option><option value="card">Card</option><option value="online">Online Booking</option><option value="transfer">Bank Transfer</option></select></label>
+        <label>Kelestarian payment<select id="manualKelestarianPayment" class="manual" name="kelestarian_payment_method"><option value="cash">Cash</option><option value="qr">QR</option><option value="card">Card</option><option value="online">Online Booking</option><option value="transfer">Bank Transfer</option></select></label>
+        <label>Deposit payment<select id="manualDepositPayment" class="manual" name="deposit_payment_method"><option value="cash">Cash</option><option value="qr">QR</option><option value="card">Card</option><option value="online">Online Booking</option><option value="transfer">Bank Transfer</option></select></label>
         <button class="primary" id="saveManual">Save</button>
         <input id="manualGuest" class="manual" name="guest_name" type="hidden" value="Walk-in guest">
         <input id="manualCheckIn" class="manual" name="check_in_date" type="hidden">
@@ -1560,7 +1560,7 @@ function html(v){return String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"
 function iso(d){let z=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate())}
 function jsonSetting(name,fallback){try{return JSON.parse(settings()[name]||"")}catch{return fallback}}
 function todayIso(){return iso(new Date())}
-function paymentLabel(v){return ({cash:"Cash",qr:"QR",card:"Card",online:"Online",transfer:"Transfer"}[v]||v)}
+function paymentLabel(v){return ({cash:"Cash",qr:"QR",card:"Card",online:"Online Booking",transfer:"Bank Transfer"}[v]||v)}
 const ROOM_GROUPS={suite:["101","201","301"],twin:["105-102","112-109","205-202","212-209","305-302","312-309"],family:["106-108","113-115","206-208","213-215","306-308","313-315"]};
 function expandRooms(list){let out=[];list.forEach(item=>{if(!String(item).includes("-")){out.push(String(item));return}let [a,b]=String(item).split("-").map(Number),step=a<=b?1:-1;for(let n=a;;n+=step){out.push(String(n));if(n===b)break}});return out}
 const ROOM_LOOKUP=Object.fromEntries(Object.entries(ROOM_GROUPS).flatMap(([type,list])=>expandRooms(list).map(room=>[room,type])));
