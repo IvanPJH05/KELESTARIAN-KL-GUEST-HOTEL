@@ -358,6 +358,7 @@ def save_verified_stay_rows(rows: list[dict], existing_records: list[dict]) -> N
         for row in existing_records
         if verification_value(row.get("bill_no"))
     }
+    updates = []
     inserts = []
     for row in rows:
         folio = verification_value(row.get("folio_no"))
@@ -366,8 +367,18 @@ def save_verified_stay_rows(rows: list[dict], existing_records: list[dict]) -> N
         if not existing:
             inserts.append(row)
             continue
-        query = {"id": f"eq.{existing['id']}"} if existing.get("id") else {"folio_no": f"eq.{existing.get('folio_no')}"}
-        supabase_request("PATCH", "guest_stays", row, query=query, prefer="return=minimal")
+        if existing.get("id"):
+            updates.append({**row, "id": existing["id"]})
+        else:
+            updates.append(row)
+    for index in range(0, len(updates), 500):
+        supabase_request(
+            "POST",
+            "guest_stays",
+            updates[index : index + 500],
+            query={"on_conflict": "id"},
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
     for index in range(0, len(inserts), 500):
         supabase_request("POST", "guest_stays", inserts[index : index + 500], prefer="return=minimal")
 
