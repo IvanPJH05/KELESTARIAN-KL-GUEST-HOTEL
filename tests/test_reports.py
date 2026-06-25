@@ -17,6 +17,7 @@ from app import (
     form_b_pdf,
     form_c_pdf,
     historical_summary,
+    ledger_sales,
     normalize_payment_method,
     report_filename,
     stay_record,
@@ -85,7 +86,7 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="dashboard-2026-checkins-20260625"' in PAGE
+    assert 'APP_VERSION="dashboard-custom-ledger-20260625"' in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE
     assert 'id="reportMonthC" type="month"' in PAGE
     assert 'id="reportStartC" type="date"' in PAGE
@@ -126,6 +127,19 @@ def test_kelestarian_rows_are_limited_to_calendar_year_2026():
     assert [row["date"] for row in sales] == ["2026-12-30", "2026-12-31"]
     assert sum(Decimal(row["kelestarian"].replace(",", "")) for row in sales) == Decimal("10.00")
     assert sales[0]["kelestarian"] == "10.00"
+
+
+def test_ledger_sales_can_display_historical_custom_dates_without_kelestarian():
+    old = stay("OLD GUEST", "201", "120.00", 2, date(2024, 1, 10))
+    new = stay("NEW GUEST", "202", "100.00", 1, date(2026, 1, 10))
+
+    rows = ledger_sales([old, new], FEE)
+
+    assert [row["date"] for row in rows] == ["2024-01-10", "2024-01-11", "2026-01-10"]
+    assert rows[0]["price"] == "120.00"
+    assert rows[0]["kelestarian"] == "0.00"
+    assert rows[1]["payment_status"] == "Paid on 10/01/2024"
+    assert rows[2]["kelestarian"] == "5.00"
 
 
 def test_report_selection_excludes_pre_2026_checkins():
@@ -370,6 +384,27 @@ def test_dashboard_history_loads_only_2026_checkins(monkeypatch):
     assert calls == [(date(2026, 1, 1), date(2026, 12, 31))]
     assert [item["guest_name"] for item in payload["stays"]] == ["VALID 2026"]
     assert payload["summary"]["stays"] == 1
+
+
+def test_dashboard_history_custom_range_loads_selected_checkins(monkeypatch):
+    calls = []
+    old = stay_record(stay("OLD CUSTOM", "701", "120.00", 2, date(2024, 1, 10)))
+
+    def fake_load(start, end):
+        calls.append((start, end))
+        return [old]
+
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+    monkeypatch.setattr(hotel_app, "load_stays_by_checkin_range_from_supabase", fake_load)
+
+    response = hotel_app.app.test_client().get("/api/history?fee_rate=5.00&start=2024-01-01&end=2024-01-31")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert calls == [(date(2024, 1, 1), date(2024, 1, 31))]
+    assert [item["date"] for item in payload["sales"]] == ["2024-01-10", "2024-01-11"]
+    assert payload["sales"][0]["price"] == "120.00"
+    assert payload["sales"][0]["kelestarian"] == "0.00"
 
 
 def test_verified_rows_batch_update_existing_folios_and_insert_new(monkeypatch):
