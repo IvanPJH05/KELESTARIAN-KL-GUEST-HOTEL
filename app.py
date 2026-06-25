@@ -170,7 +170,30 @@ def excel_rows(filename: str, data: bytes):
 
 def parse_payment_method(text: str) -> str | None:
     match = re.search(r"\[\s*([^:\]]+)\s*:", clean(text))
-    return match.group(1).strip() if match else None
+    return normalize_payment_method(match.group(1).strip() if match else None)
+
+
+def normalize_payment_method(value: str | None) -> str | None:
+    text = clean(value).lower()
+    if not text:
+        return None
+    if "online" in text or "booking" in text:
+        return "Online Booking"
+    if "cash" in text:
+        return "Cash"
+    if "atm" in text or "bank" in text or "transfer" in text:
+        return "Bank / ATM"
+    if "visa" in text or "master" in text or "american express" in text or "discover" in text or "card" in text:
+        return "Card"
+    if "check" in text or "cheque" in text:
+        return "Cheque"
+    if "security" in text or "deposit" in text:
+        return "Security Deposit"
+    if "reservation" in text:
+        return "Reservation"
+    if "extra" in text or "charge" in text:
+        return "Extra Charge"
+    return clean(value)
 
 
 def parse_payment_amount(text: str) -> Decimal | None:
@@ -619,6 +642,18 @@ def load_review_queue_from_supabase() -> list[dict]:
     ) or []
 
 
+def load_import_batches_from_supabase() -> list[dict]:
+    if not supabase_configured():
+        return []
+    return supabase_select_all(
+        "hotel_import_batches",
+        query={
+            "select": "id,source_filename,imported_at,stay_count,sale_row_count,total_sales,total_kelestarian",
+            "order": "imported_at.desc",
+        },
+    )
+
+
 def records_to_stays(records: list[dict]) -> list[Stay]:
     stays = []
     for item in records:
@@ -650,7 +685,7 @@ def records_to_stays(records: list[dict]) -> list[Stay]:
                 misc_amount=dec(item.get("misc_amount")),
                 total_amount=total,
                 amount_paid=dec(item.get("amount_paid")),
-                payment_method=clean(item.get("payment_method")) or None,
+                payment_method=normalize_payment_method(item.get("payment_method")),
                 flags=item.get("flags") or [],
             )
         )
@@ -780,6 +815,79 @@ def summary(stays: list[Stay], fee_rate: Decimal) -> dict:
             for key, value in sorted(revenue_by_rate_type.items())
         ],
         "data_quality_issues": issues,
+    }
+
+
+def historical_summary(stays: list[Stay], fee_rate: Decimal) -> dict:
+    historical = [stay for stay in stays if stay.check_out_date and stay.check_out_date < KELESTARIAN_START]
+    by_year = defaultdict(lambda: {"stays": 0, "nights": 0, "revenue": Decimal("0")})
+    by_month = defaultdict(lambda: {"stays": 0, "nights": 0, "revenue": Decimal("0")})
+    payment = defaultdict(lambda: {"count": 0, "total_amount": Decimal("0")})
+    guests = defaultdict(lambda: {"guest_name": "", "stays": 0, "nights": 0, "total_amount": Decimal("0"), "first": None, "latest": None})
+    issues = []
+    for stay in historical:
+        year = str(stay.check_out_date.year)
+        month = stay.check_out_date.strftime("%Y-%m")
+        nights = stay.number_of_nights or 0
+        by_year[year]["stays"] += 1
+        by_year[year]["nights"] += nights
+        by_year[year]["revenue"] += stay.total_amount
+        by_month[month]["stays"] += 1
+        by_month[month]["nights"] += nights
+        by_month[month]["revenue"] += stay.total_amount
+        pay = stay.payment_method or "Unknown"
+        payment[pay]["count"] += 1
+        payment[pay]["total_amount"] += stay.amount_paid
+        guest_key = verification_value(stay.guest_name) or "UNKNOWN"
+        guest = guests[guest_key]
+        guest["guest_name"] = stay.guest_name or "Unknown"
+        guest["stays"] += 1
+        guest["nights"] += nights
+        guest["total_amount"] += stay.total_amount
+        guest["first"] = min(filter(None, [guest["first"], stay.check_in_date])) if guest["first"] else stay.check_in_date
+        guest["latest"] = max(filter(None, [guest["latest"], stay.check_out_date])) if guest["latest"] else stay.check_out_date
+        if stay.flags:
+            issues.append({"bill_no": stay.bill_no, "guest_name": stay.guest_name, "room_no": stay.room_no, "flags": stay.flags})
+    monthly_values = sorted(by_month.items())
+    yearly_values = sorted(by_year.items())
+    monthly_average_revenue = sum((item["revenue"] for _, item in monthly_values), Decimal("0")) / Decimal(len(monthly_values)) if monthly_values else Decimal("0")
+    forecast_source_years = [year for year in ("2023", "2024", "2025") if year in by_year]
+    forecast_source_nights = sum((by_year[year]["nights"] for year in forecast_source_years), 0)
+    forecast_years = len(forecast_source_years) or 1
+    forecast_nights = Decimal(forecast_source_nights) / Decimal(forecast_years)
+    top_guests = sorted(guests.values(), key=lambda item: item["total_amount"], reverse=True)[:20]
+    return {
+        "historical_stays": len(historical),
+        "first_year": yearly_values[0][0] if yearly_values else "",
+        "last_year": yearly_values[-1][0] if yearly_values else "",
+        "total_revenue": money(sum((stay.total_amount for stay in historical), Decimal("0"))),
+        "total_nights": sum((stay.number_of_nights or 0) for stay in historical),
+        "monthly_average_revenue": money(monthly_average_revenue),
+        "forecast_2026_kelestarian": money(forecast_nights * fee_rate),
+        "yearly_revenue": [
+            {"year": year, "stays": item["stays"], "nights": item["nights"], "revenue": money(item["revenue"])}
+            for year, item in yearly_values
+        ],
+        "monthly_revenue": [
+            {"month": month, "stays": item["stays"], "nights": item["nights"], "revenue": money(item["revenue"])}
+            for month, item in monthly_values
+        ],
+        "payment_categories": [
+            {"payment_method": key, "count": item["count"], "total_amount": money(item["total_amount"])}
+            for key, item in sorted(payment.items(), key=lambda row: row[1]["total_amount"], reverse=True)
+        ],
+        "top_guests": [
+            {
+                "guest_name": item["guest_name"],
+                "stays": item["stays"],
+                "nights": item["nights"],
+                "total_amount": money(item["total_amount"]),
+                "first": item["first"].isoformat() if item["first"] else "",
+                "latest": item["latest"].isoformat() if item["latest"] else "",
+            }
+            for item in top_guests
+        ],
+        "data_quality_issues": issues[:200],
     }
 
 
@@ -1166,6 +1274,7 @@ PAGE = r"""<!doctype html>
     <div class="nav-label">Workspace</div>
     <nav class="nav">
       <button data-view="dashboard" class="active">Dashboard</button>
+      <button data-view="historical">Historical</button>
       <button data-view="b">Laporan B</button>
       <button data-view="c">Laporan C</button>
       <button data-view="review">Manual Review</button>
@@ -1188,6 +1297,9 @@ PAGE = r"""<!doctype html>
     <section id="dashboard" class="view active">
       <div class="panel"><div class="toolbar"><h2>Daily sales ledger</h2><input id="search" placeholder="Search guest or room"></div><div class="filters"><button data-range="today">Today</button><button data-range="last7">Last 7 days</button><button data-range="month" class="active">This month</button><button data-range="custom">Custom date</button><input id="startDate" type="date"><input id="endDate" type="date"></div><div id="ledger" class="empty">No imported check-ins yet.</div></div>
       <div class="panel"><h2>Sales reports</h2><br><div id="analytics" class="empty">Import Excel first.</div></div>
+    </section>
+    <section id="historical" class="view">
+      <div class="panel"><div class="toolbar"><h2>Historical sales insights</h2><button class="primary" id="loadHistorical">Load history</button></div><div id="historicalPanel" class="empty">Load saved data to review 2016-2025 sales history, payment trends, guest memory, forecasts, archive batches, and data quality.</div></div>
     </section>
     <section id="b" class="view">
       <div class="panel"><div class="toolbar"><h2>Laporan B preview</h2><button class="primary" id="downloadB" disabled>Download PDF</button></div><div class="report-controls"><label>Month to print<input id="reportMonthB" type="month"></label></div><div id="previewB" class="empty">Import Excel first.</div></div>
@@ -1230,17 +1342,20 @@ function visibleRows(){let bounds=rangeBounds(),term=q("#search").value.toLowerC
 function groupRows(rows){let html='<div class="table-wrap"><table><thead><tr><th>Room</th><th>Guest</th><th>Stay</th><th>Amount Paid</th><th>Kelestarian</th><th>Payment</th><th>Rate Type</th></tr></thead><tbody>';let cur='';rows.forEach(r=>{let paid=r.is_paid_continuation?`<span class="paid-pill">${r.payment_status||("Paid on "+(r.display_date||""))}</span>`:`RM ${r.price||"0.00"}`;let fee=r.is_paid_continuation?"":`RM ${r.kelestarian||"0.00"}`;if(r.display_date!==cur){cur=r.display_date;html+=`<tr class="day-row"><td colspan="7">${cur}</td></tr>`}html+=`<tr class="${r.is_paid_continuation?'paid-continuation':(r.multi_night?'multi':'')}"><td>${r.room_no||''}</td><td>${r.guest_name||''}</td><td>${r.stay_progress||''}</td><td>${paid}</td><td>${fee}</td><td>${r.payment_method||''}</td><td>${r.rate_type||''}</td></tr>`});return html+'</tbody></table></div>'}
 function table(rows,heads,mapper){return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+rows.map(mapper).join('')+'</tbody></table></div>'}
 function collectionBreakdown(rows){let map={};rows.filter(r=>!r.is_paid_continuation).forEach(r=>{let key=r.payment_method||"Unknown";map[key]??={payment_method:key,bills:0,amount:0,kelestarian:0};map[key].bills++;map[key].amount+=asMoney(r.price);map[key].kelestarian+=asMoney(r.kelestarian)});return Object.values(map).sort((a,b)=>b.amount-a.amount)}
+function renderHistorical(data){let el=q("#historicalPanel");if(!data||!data.summary){el.className='empty';el.innerHTML='No historical data loaded.';return}let h=data.summary,batches=data.archive_batches||[];el.className='';el.innerHTML='<div class="cards"><article class="metric"><span>Historical stays</span><strong>'+Number(h.historical_stays||0).toLocaleString()+'</strong></article><article class="metric"><span>Historical revenue</span><strong>RM '+(h.total_revenue||'0.00')+'</strong></article><article class="metric"><span>Room nights</span><strong>'+Number(h.total_nights||0).toLocaleString()+'</strong></article><article class="metric"><span>2026 estimate</span><strong>RM '+(h.forecast_2026_kelestarian||'0.00')+'</strong></article></div><h2>Yearly sales</h2><br>'+table(h.yearly_revenue||[],['Year','Stays','Nights','Revenue'],r=>`<tr><td>${r.year}</td><td>${Number(r.stays).toLocaleString()}</td><td>${Number(r.nights).toLocaleString()}</td><td>RM ${r.revenue}</td></tr>`)+'<br><h2>Monthly trend</h2><br>'+table((h.monthly_revenue||[]).slice(-36),['Month','Stays','Nights','Revenue'],r=>`<tr><td>${r.month}</td><td>${Number(r.stays).toLocaleString()}</td><td>${Number(r.nights).toLocaleString()}</td><td>RM ${r.revenue}</td></tr>`)+'<br><h2>Payment categories</h2><br>'+table(h.payment_categories||[],['Payment','Bills','Amount'],r=>`<tr><td>${r.payment_method}</td><td>${Number(r.count).toLocaleString()}</td><td>RM ${r.total_amount}</td></tr>`)+'<br><h2>Guest memory</h2><br>'+table(h.top_guests||[],['Guest','Stays','Nights','Spend','First','Latest'],r=>`<tr><td>${html(r.guest_name)}</td><td>${r.stays}</td><td>${r.nights}</td><td>RM ${r.total_amount}</td><td>${r.first}</td><td>${r.latest}</td></tr>`)+'<br><h2>Data quality issues</h2><br>'+((h.data_quality_issues||[]).length?table(h.data_quality_issues||[],['Bill','Guest','Room','Issue'],r=>`<tr><td>${html(r.bill_no)}</td><td>${html(r.guest_name)}</td><td>${html(r.room_no)}</td><td>${html((r.flags||[]).join(', '))}</td></tr>`):'<div class="empty">No historical data quality issues found.</div>')+'<br><h2>Import archive</h2><br>'+table(batches.slice(0,80),['File','Imported','Stays','Revenue','Kelestarian'],r=>`<tr><td>${html(r.source_filename)}</td><td>${html(String(r.imported_at||'').slice(0,19).replace('T',' '))}</td><td>${Number(r.stay_count||0).toLocaleString()}</td><td>RM ${asMoney(r.total_sales).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${asMoney(r.total_kelestarian).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`)}
 function setReportDefaults(){let dates=stays.map(s=>s.check_in_date).filter(Boolean).sort(),latest=dates.at(-1);if(!latest)return;if(!q("#reportMonthB").value)q("#reportMonthB").value=localStorage.getItem("reportMonthB")||latest.slice(0,7);if(!q("#reportStartC").value)q("#reportStartC").value=localStorage.getItem("reportStartC")||latest;if(!q("#reportEndC").value)q("#reportEndC").value=localStorage.getItem("reportEndC")||latest}
 function selectedCheckIns(kind){let rows=sales.filter(r=>!r.is_paid_continuation);if(kind==='b'){let month=q("#reportMonthB").value;return rows.filter(r=>r.date.slice(0,7)===month)}let start=q("#reportStartC").value,end=q("#reportEndC").value;return rows.filter(r=>(!start||r.date>=start)&&(!end||r.date<=end))}
 function renderReviewQueue(){let el=q("#reviewQueue");el.className=reviewQueue.length?'':'empty';el.innerHTML=reviewQueue.length?table(reviewQueue,['Folio No.','Incoming Bill','Existing Bill','Guest','Reason','Source'],r=>`<tr><td>${html(r.folio_no)}</td><td>${html(r.incoming_bill_no)}</td><td>${html(r.existing_bill_no)}</td><td>${html((r.incoming_record||{}).guest_name)}</td><td class="review-reason">${html(String(r.reason||'').replaceAll('_',' '))}</td><td>${html(r.source_filename)}</td></tr>`):'No records need manual review.'}
 function render(){setReportDefaults();qa(".filters button").forEach(b=>b.classList.toggle("active",b.dataset.range===rangeMode));let filtered=visibleRows();let visibleSales=filtered.reduce((t,r)=>t+asMoney(r.price),0),visibleFee=filtered.reduce((t,r)=>t+asMoney(r.kelestarian),0);q("#mStays").textContent=summary.stays||0;q("#mRows").textContent=filtered.length;q("#mSales").textContent='RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#mFee").textContent='RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});q("#downloadB").disabled=!stays.length;q("#downloadC").disabled=!stays.length;q("#ledger").className=filtered.length?'':'empty';q("#ledger").innerHTML=filtered.length?groupRows(filtered):'No rows in this date range.';let bSelected=selectedCheckIns('b'),byDay={};bSelected.forEach(r=>{byDay[r.display_date]??={rooms:0,nights:0,fee:0};byDay[r.display_date].rooms++;byDay[r.display_date].nights+=Number(r.nights||0);byDay[r.display_date].fee+=asMoney(r.kelestarian)});let bRows=Object.entries(byDay).map(([d,v])=>({d,...v}));q("#previewB").className=bRows.length?'':'empty';q("#previewB").innerHTML=bRows.length?table(bRows,['Tarikh','Jumlah Bilik','Bilangan Malam','Jumlah Kutipan'],r=>`<tr><td>${r.d}</td><td>${r.rooms}</td><td>${r.nights}</td><td>RM ${r.fee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'No check-ins in the selected month.';let cSelected=selectedCheckIns('c');q("#previewC").className=cSelected.length?'':'empty';q("#previewC").innerHTML=cSelected.length?groupRows(cSelected):'No check-ins in the selected date range.';let analytics=q("#analytics"),collections=collectionBreakdown(filtered);if(!summary.payment_method_breakdown){analytics.className='empty';analytics.innerHTML='Import Excel first.'}else{analytics.className='';analytics.innerHTML='<div class="cards"><article class="metric"><span>Collected in range</span><strong>RM '+visibleSales.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Kelestarian in range</span><strong>RM '+visibleFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</strong></article><article class="metric"><span>Collection methods</span><strong>'+collections.length+'</strong></article><article class="metric"><span>Data issues</span><strong>'+(summary.data_quality_issues||[]).length+'</strong></article></div><h2>Payment collection methods</h2><br>'+ (collections.length?table(collections,['Payment Method','Bills','Collected','Kelestarian'],r=>`<tr><td>${r.payment_method}</td><td>${r.bills}</td><td>RM ${r.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>RM ${r.kelestarian.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`):'<div class="empty">No collections in this date range.</div>') + '<br><h2>Revenue by rate type</h2><br>'+table(summary.revenue_by_rate_type,['Rate Type','Bills','Amount'],r=>`<tr><td>${r.rate_type}</td><td>${r.count}</td><td>RM ${r.total_amount}</td></tr>`) }}
 async function importFile(file){q("#dropText").innerHTML=html(file.name)+'<small>Importing...</small>';let fd=new FormData();fd.append('file',file);fd.append('fee_rate',settings().fee_rate||'5.00');let res=await fetch('/api/import',{method:'POST',body:fd});let data=await res.json();if(!res.ok){q("#notice").textContent=data.error||'Import failed';q("#dropText").innerHTML=html(file.name)+'<small>Import failed</small>';return}stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));let rangeNote=showImportedRange(data.import_start&&data.import_end?{start:data.import_start,end:data.import_end}:null);let savedNote=data.saved?`${data.inserted_count||0} new, ${data.updated_count||0} updated`:`${data.accepted_count||0} parsed`;let message=`Imported ${summary.stays} stays. ${savedNote}.`+rangeNote;if(data.merged_duplicate_count)message+=` ${data.merged_duplicate_count} duplicate row(s) merged.`;if(data.review_count)message+=` ${data.review_count} item(s) logged for review.`;if(data.review_error)message+=` Manual Review warning: ${data.review_error}`;if(data.save_error)message+=` Database warning: ${data.save_error}`;q("#notice").textContent=message;q("#dropText").innerHTML=html(file.name)+'<small>Imported</small>';render();loadReviewQueue()}
 async function loadHistory(){let res=await fetch('/api/history?fee_rate='+(settings().fee_rate||'5.00'));let data=await res.json();if(!res.ok||!data.enabled||!data.stays.length)return;stays=data.stays;sales=data.sales;summary=data.summary;localStorage.setItem('stays',JSON.stringify(stays));localStorage.setItem('sales',JSON.stringify(sales));localStorage.setItem('summary',JSON.stringify(summary));let rangeNote=visibleRows().length?"":showImportedRange();q("#notice").textContent=`Loaded ${summary.stays} saved stays from Supabase.`+rangeNote;render()}
+async function loadHistorical(){q("#historicalPanel").className='empty';q("#historicalPanel").innerHTML='Loading historical data...';let res=await fetch('/api/historical?fee_rate='+(settings().fee_rate||'5.00'));let data=await res.json();if(!res.ok||!data.enabled){q("#historicalPanel").innerHTML=data.error||'Historical data is not available.';return}renderHistorical(data)}
 async function loadReviewQueue(){let res=await fetch('/api/review-queue'),data=await res.json();reviewQueue=res.ok&&data.enabled?(data.records||[]):[];renderReviewQueue()}
 async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));if(kind==='b'){let month=q("#reportMonthB").value;if(!month){q("#notice").textContent='Select a month for Lampiran B.';return}fd.append('report_month',month)}else{let start=q("#reportStartC").value,end=q("#reportEndC").value;if(!start||!end){q("#notice").textContent='Select the first and last date for Lampiran C.';return}if(start>end){q("#notice").textContent='Lampiran C first date must not be after the last date.';return}fd.append('report_start',start);fd.append('report_end',end)}Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran B.pdf':'Lampiran C.pdf');a.click();URL.revokeObjectURL(url)}
 qa(".nav button").forEach(b=>b.onclick=()=>{qa(".nav button").forEach(x=>x.classList.remove('active'));b.classList.add('active');qa(".view").forEach(v=>v.classList.remove('active'));q("#"+b.dataset.view).classList.add('active');q("#pageTitle").textContent=b.textContent});
 q("#file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]);q("#search").oninput=render;q("#downloadB").onclick=()=>download('b');q("#downloadC").onclick=()=>download('c');
 q("#refreshReview").onclick=loadReviewQueue;
+q("#loadHistorical").onclick=loadHistorical;
 qa(".filters button").forEach(b=>b.onclick=()=>{rangeMode=b.dataset.range;localStorage.setItem("rangeMode",rangeMode);render()});
 q("#startDate").value=localStorage.getItem("startDate")||"";q("#endDate").value=localStorage.getItem("endDate")||"";
 ["#startDate","#endDate"].forEach(id=>q(id).onchange=()=>{rangeMode="custom";localStorage.setItem("rangeMode",rangeMode);localStorage.setItem(id.slice(1),q(id).value);render()});
@@ -1306,6 +1421,23 @@ def api_history():
         return jsonify({"enabled": True, "stays": [stay_record(s) for s in stays], "sales": expanded_sales(stays, fee_rate), "summary": summary(stays, fee_rate)})
     except Exception as exc:
         return jsonify({"enabled": supabase_configured(), "error": str(exc)}), 400
+
+
+@app.get("/api/historical")
+def api_historical():
+    try:
+        if not supabase_configured():
+            return jsonify({"enabled": False, "summary": {}, "archive_batches": []})
+        fee_rate = dec(request.args.get("fee_rate", "5.00"))
+        records = load_stays_from_supabase()
+        stays = records_to_stays(records) if records else []
+        return jsonify({
+            "enabled": True,
+            "summary": historical_summary(stays, fee_rate),
+            "archive_batches": load_import_batches_from_supabase(),
+        })
+    except Exception as exc:
+        return jsonify({"enabled": supabase_configured(), "error": str(exc), "summary": {}, "archive_batches": []}), 400
 
 
 @app.get("/api/review-queue")

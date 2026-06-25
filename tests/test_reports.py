@@ -16,6 +16,8 @@ from app import (
     filter_stays_for_report,
     form_b_pdf,
     form_c_pdf,
+    historical_summary,
+    normalize_payment_method,
     report_filename,
     stay_record,
     summary,
@@ -86,6 +88,14 @@ def test_reporting_settings_include_default_contact_details():
     assert 'data-view="review">Manual Review' in PAGE
 
 
+def test_payment_methods_are_categorised():
+    assert normalize_payment_method("Visa Debit Card") == "Card"
+    assert normalize_payment_method("Master Card") == "Card"
+    assert normalize_payment_method("ATM Card") == "Bank / ATM"
+    assert normalize_payment_method("Online Booking") == "Online Booking"
+    assert normalize_payment_method("Security Deposit") == "Security Deposit"
+
+
 def test_multi_night_rows_do_not_duplicate_collections():
     sales = expanded_sales(scenarios(), FEE)
     assert len(sales) == 7
@@ -129,6 +139,17 @@ def test_report_selection_includes_stays_overlapping_2026_period():
 
     assert [item.guest_name for item in selected_b] == ["CROSS START"]
     assert [item.guest_name for item in selected_c] == ["CROSS START"]
+
+
+def test_historical_summary_excludes_2026_kelestarian_data():
+    old = stay("OLD", "101", "100.00", 1, date(2025, 6, 1))
+    kelestarian = stay("NEW", "102", "100.00", 1, date(2026, 6, 1))
+
+    data = historical_summary([old, kelestarian], FEE)
+
+    assert data["historical_stays"] == 1
+    assert data["total_revenue"] == "100.00"
+    assert data["yearly_revenue"] == [{"year": "2025", "stays": 1, "nights": 1, "revenue": "100.00"}]
 
 
 def test_official_reports_use_letter_pages_totals_and_readable_filenames():
