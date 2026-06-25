@@ -86,10 +86,13 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="dashboard-lestari-deposit-20260626"' in PAGE
+    assert 'APP_VERSION="daily-sales-lestari-deposit-20260626"' in PAGE
     assert 'data-view="manual">Manual Check-In' in PAGE
-    assert 'data-view="dailySales">Daily Sales' not in PAGE
+    assert 'data-view="dailySales">Daily Sales' in PAGE
     assert 'id="lestariDeposit"' in PAGE
+    assert 'id="dailySalesTable"' in PAGE
+    assert 'data-daily-range="today"' in PAGE
+    assert 'data-daily-range="custom"' in PAGE
     assert 'Lestari and Deposit' in PAGE
     assert 'Total Bank Transfer' in PAGE
     assert 'Cash Deposit' in PAGE
