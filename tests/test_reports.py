@@ -196,17 +196,20 @@ def test_sales_bill_register_detail_folio_column_value_is_number_of_nights(monke
     assert parsed[0].check_out_date == date(2026, 6, 23)
 
 
-def test_import_response_shows_only_verified_database_rows_after_save(monkeypatch):
-    verified = stay("VERIFIED GUEST", "401", "150.00", 1, folio_no="FN30254", bill_no="BN100")
-    rejected_mismatch = stay("REJECTED MISMATCH", "402", "150.00", 1, folio_no="FN30254", bill_no="BN999")
+def test_import_response_returns_uploaded_rows_without_full_history_reload(monkeypatch):
+    imported = stay("IMPORTED GUEST", "402", "150.00", 1, folio_no="FN30254", bill_no="BN999")
 
-    monkeypatch.setattr(hotel_app, "parse_stays", lambda _filename, _data: [rejected_mismatch])
+    monkeypatch.setattr(hotel_app, "parse_stays", lambda _filename, _data: [imported])
     monkeypatch.setattr(
         hotel_app,
         "save_import_to_supabase",
-        lambda _filename, _stays, _sales, _summary: {"saved": True, "accepted_count": 0, "review_count": 1},
+        lambda _filename, _stays, _sales, _summary: {"saved": True, "accepted_count": 1, "review_count": 0},
     )
-    monkeypatch.setattr(hotel_app, "load_stays_from_supabase", lambda: [hotel_app.stay_record(verified)])
+    monkeypatch.setattr(
+        hotel_app,
+        "load_stays_from_supabase",
+        lambda: (_ for _ in ()).throw(AssertionError("import should not load full history")),
+    )
     monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
 
     client = hotel_app.app.test_client()
@@ -218,8 +221,8 @@ def test_import_response_shows_only_verified_database_rows_after_save(monkeypatc
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert [item["guest_name"] for item in payload["stays"]] == ["VERIFIED GUEST"]
-    assert "REJECTED MISMATCH" not in {item["guest_name"] for item in payload["stays"]}
+    assert [item["guest_name"] for item in payload["stays"]] == ["IMPORTED GUEST"]
+    assert payload["summary"]["stays"] == 1
 
 
 def test_verified_rows_batch_update_existing_folios_and_insert_new(monkeypatch):

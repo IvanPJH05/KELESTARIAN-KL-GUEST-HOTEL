@@ -1228,7 +1228,7 @@ q("#startDate").value=localStorage.getItem("startDate")||"";q("#endDate").value=
 let drop=q("#drop");['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])importFile(e.dataTransfer.files[0])});
 qa(".setting").forEach(i=>{i.value=localStorage.getItem('set_'+i.name)||i.value;i.oninput=()=>localStorage.setItem('set_'+i.name,i.value)});
 render();
-loadHistory();
+if(!stays.length)loadHistory();
 loadReviewQueue();
 </script>
 </body>
@@ -1260,13 +1260,6 @@ def api_import():
             return jsonify({"error": f"Database update failed. Import was not saved: {save_error}"}), 500
         import_dates = sorted({stay.check_out_date.isoformat() for stay in stays if stay.check_out_date})
         response_stays = stays
-        if save_result.get("saved") and not save_error:
-            verified_records = load_stays_from_supabase()
-            incoming_records = [stay_record(stay) for stay in stays] if save_result.get("accepted_count", 0) else []
-            merged_records = merge_stay_records(verified_records, incoming_records) if incoming_records else verified_records
-            response_stays = records_to_stays(merged_records) if merged_records else []
-            sales = expanded_sales(response_stays, fee_rate)
-            summary_data = summary(response_stays, fee_rate)
         return jsonify({
             "stays": [stay_record(s) for s in response_stays],
             "sales": sales,
