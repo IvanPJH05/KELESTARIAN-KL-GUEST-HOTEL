@@ -86,8 +86,14 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="manual-simple-rates-20260626"' in PAGE
+    assert 'APP_VERSION="daily-sales-page-20260626"' in PAGE
     assert 'data-view="manual">Manual Check-In' in PAGE
+    assert 'data-view="dailySales">Daily Sales' in PAGE
+    assert 'id="dailySalesTable"' in PAGE
+    assert 'id="cashFlowCards"' in PAGE
+    assert 'data-daily-range="today"' in PAGE
+    assert 'data-daily-range="custom"' in PAGE
+    assert 'Cash Deposit' in PAGE
     assert 'id="manualRoom"' in PAGE
     assert 'Twin room rate (RM)' in PAGE
     assert 'Family room rate (RM)' in PAGE
@@ -467,6 +473,7 @@ def test_manual_checkin_endpoint_saves_deposit_and_payment_metadata(monkeypatch)
     assert payload["sales"][0]["kelestarian_payment_method"] == "Card"
     assert payload["sales"][0]["deposit_payment_method"] == "Card"
     assert payload["sales"][0]["remark"] == "Late checkout requested"
+    assert payload["sales"][0]["folio_no"].startswith("MANUAL-")
 
 
 def test_delete_manual_checkin_only_deletes_manual_folio(monkeypatch):
