@@ -85,6 +85,7 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
+    assert 'APP_VERSION="dashboard-2026-checkins-20260625"' in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE
     assert 'id="reportMonthC" type="month"' in PAGE
     assert 'id="reportStartC" type="date"' in PAGE
@@ -122,27 +123,21 @@ def test_kelestarian_rows_are_limited_to_calendar_year_2026():
 
     sales = expanded_sales([before, crossing_start, crossing_end, after], FEE)
 
-    assert [row["date"] for row in sales] == [
-        "2026-01-01",
-        "2026-01-02",
-        "2026-12-30",
-        "2026-12-31",
-    ]
-    assert sum(Decimal(row["kelestarian"].replace(",", "")) for row in sales) == Decimal("20.00")
+    assert [row["date"] for row in sales] == ["2026-12-30", "2026-12-31"]
+    assert sum(Decimal(row["kelestarian"].replace(",", "")) for row in sales) == Decimal("10.00")
     assert sales[0]["kelestarian"] == "10.00"
-    assert sales[2]["kelestarian"] == "10.00"
 
 
-def test_report_selection_includes_stays_overlapping_2026_period():
+def test_report_selection_excludes_pre_2026_checkins():
     crossing = stay("CROSS START", "002", "400.00", 4, date(2025, 12, 30))
-    before = stay("BEFORE", "001", "100.00", 2, date(2025, 12, 29))
+    valid = stay("VALID", "003", "100.00", 2, date(2026, 1, 1))
     after = stay("AFTER", "004", "100.00", 1, date(2027, 1, 1))
 
-    selected_b = filter_stays_for_report([crossing, before, after], "b", report_month="2026-01")
-    selected_c = filter_stays_for_report([crossing, before, after], "c", report_start="2026-01-01", report_end="2026-01-02")
+    selected_b = filter_stays_for_report([crossing, valid, after], "b", report_month="2026-01")
+    selected_c = filter_stays_for_report([crossing, valid, after], "c", report_start="2026-01-01", report_end="2026-01-02")
 
-    assert [item.guest_name for item in selected_b] == ["CROSS START"]
-    assert [item.guest_name for item in selected_c] == ["CROSS START"]
+    assert [item.guest_name for item in selected_b] == ["VALID"]
+    assert [item.guest_name for item in selected_c] == ["VALID"]
 
 
 def test_historical_summary_excludes_2026_kelestarian_data():
@@ -349,6 +344,31 @@ def test_import_response_returns_uploaded_rows_without_full_history_reload(monke
     assert response.status_code == 200
     payload = response.get_json()
     assert [item["guest_name"] for item in payload["stays"]] == ["IMPORTED GUEST"]
+    assert payload["summary"]["stays"] == 1
+
+
+def test_dashboard_history_loads_only_2026_checkins(monkeypatch):
+    calls = []
+    valid = stay_record(stay("VALID 2026", "601", "100.00", 1, date(2026, 6, 1)))
+
+    def fake_load(start, end):
+        calls.append((start, end))
+        return [valid]
+
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+    monkeypatch.setattr(hotel_app, "load_stays_by_checkin_range_from_supabase", fake_load)
+    monkeypatch.setattr(
+        hotel_app,
+        "load_stays_from_supabase",
+        lambda: (_ for _ in ()).throw(AssertionError("dashboard should not load the full archive")),
+    )
+
+    response = hotel_app.app.test_client().get("/api/history?fee_rate=5.00")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert calls == [(date(2026, 1, 1), date(2026, 12, 31))]
+    assert [item["guest_name"] for item in payload["stays"]] == ["VALID 2026"]
     assert payload["summary"]["stays"] == 1
 
 

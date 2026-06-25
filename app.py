@@ -615,6 +615,19 @@ def load_stays_by_checkout_range_from_supabase(start: date, end: date) -> list[d
     )
 
 
+def load_stays_by_checkin_range_from_supabase(start: date, end: date) -> list[dict]:
+    if not supabase_configured():
+        return []
+    return supabase_select_all(
+        "guest_stays",
+        query={
+            "select": "*",
+            "and": f"(check_in_date.gte.{start.isoformat()},check_in_date.lte.{end.isoformat()})",
+            "order": "check_in_date.asc,room_no.asc,guest_name.asc",
+        },
+    )
+
+
 def load_matching_stays_from_supabase(stays: list[Stay]) -> list[dict]:
     if not supabase_configured():
         return []
@@ -712,8 +725,10 @@ def expanded_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
     for stay in stays:
         if not stay.check_in_date or not stay.number_of_nights:
             continue
+        if stay.check_in_date < KELESTARIAN_START or stay.check_in_date > KELESTARIAN_END:
+            continue
         stay_last_night = stay.check_in_date + timedelta(days=stay.number_of_nights - 1)
-        charge_start = max(stay.check_in_date, KELESTARIAN_START)
+        charge_start = stay.check_in_date
         charge_end = min(stay_last_night, KELESTARIAN_END)
         if charge_start > charge_end:
             continue
@@ -829,6 +844,10 @@ def summary(stays: list[Stay], fee_rate: Decimal) -> dict:
         ],
         "data_quality_issues": issues,
     }
+
+
+def kelestarian_stays(stays: list[Stay]) -> list[Stay]:
+    return [stay for stay in stays if stay.check_in_date and KELESTARIAN_START <= stay.check_in_date <= KELESTARIAN_END]
 
 
 def historical_summary(stays: list[Stay], fee_rate: Decimal, selected_year: int | None = None) -> dict:
@@ -1083,6 +1102,8 @@ def report_filename(kind: str, stays: list[Stay], report_start: date | None = No
 
 def stay_overlaps_period(stay: Stay, start: date, end: date) -> bool:
     if not stay.check_in_date or not stay.number_of_nights:
+        return False
+    if stay.check_in_date < KELESTARIAN_START or stay.check_in_date > KELESTARIAN_END:
         return False
     stay_last_night = stay.check_in_date + timedelta(days=stay.number_of_nights - 1)
     charge_start = max(start, KELESTARIAN_START)
@@ -1359,6 +1380,8 @@ select{width:100%;border:1px solid #c9d5e3;border-radius:7px;padding:11px 12px;f
   </section>
 </main>
 <script>
+const APP_VERSION="dashboard-2026-checkins-20260625";
+if(localStorage.getItem("appVersion")!==APP_VERSION){["stays","sales","summary"].forEach(k=>localStorage.removeItem(k));localStorage.setItem("appVersion",APP_VERSION)}
 let stays=JSON.parse(localStorage.getItem("stays")||"[]");
 let sales=JSON.parse(localStorage.getItem("sales")||"[]");
 let summary=JSON.parse(localStorage.getItem("summary")||"{}");
@@ -1424,6 +1447,9 @@ def api_import():
         stays = parse_stays(upload.filename, upload.read())
         sales = expanded_sales(stays, fee_rate)
         summary_data = summary(stays, fee_rate)
+        dashboard_stays = kelestarian_stays(stays)
+        dashboard_sales = expanded_sales(dashboard_stays, fee_rate)
+        dashboard_summary = summary(dashboard_stays, fee_rate)
         save_result = {"saved": False, "accepted_count": 0, "review_count": 0}
         save_error = ""
         try:
@@ -1433,11 +1459,12 @@ def api_import():
         if supabase_configured() and save_error:
             return jsonify({"error": f"Database update failed. Import was not saved: {save_error}"}), 500
         import_dates = sorted({stay.check_out_date.isoformat() for stay in stays if stay.check_out_date})
-        response_stays = stays
         return jsonify({
-            "stays": [stay_record(s) for s in response_stays],
-            "sales": sales,
-            "summary": summary_data,
+            "stays": [stay_record(s) for s in dashboard_stays],
+            "sales": dashboard_sales,
+            "summary": dashboard_summary,
+            "parsed_count": len(stays),
+            "dashboard_count": len(dashboard_stays),
             "import_start": import_dates[0] if import_dates else "",
             "import_end": import_dates[-1] if import_dates else "",
             **save_result,
@@ -1453,7 +1480,7 @@ def api_history():
         if not supabase_configured():
             return jsonify({"enabled": False, "stays": [], "sales": [], "summary": {}})
         fee_rate = dec(request.args.get("fee_rate", "5.00"))
-        records = load_stays_from_supabase()
+        records = load_stays_by_checkin_range_from_supabase(KELESTARIAN_START, KELESTARIAN_END)
         if not records:
             return jsonify({"enabled": True, "stays": [], "sales": [], "summary": {}})
         stays = records_to_stays(records)
