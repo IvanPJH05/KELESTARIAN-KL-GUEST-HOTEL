@@ -97,6 +97,8 @@ def test_reporting_settings_include_default_contact_details():
     assert 'Online Booking' in PAGE
     assert 'Bank Transfer' in PAGE
     assert 'id="manualHistory"' in PAGE
+    assert 'id="manualRemark"' in PAGE
+    assert 'data-delete-manual' in PAGE
     assert 'Room rates JSON' not in PAGE
     assert 'id="reportMonthB" type="month"' in PAGE
     assert 'id="reportMonthC" type="month"' in PAGE
@@ -446,6 +448,7 @@ def test_manual_checkin_endpoint_saves_deposit_and_payment_metadata(monkeypatch)
             "kelestarian_payment_method": "card",
             "deposit_amount": "50.00",
             "deposit_payment_method": "card",
+            "remark": "Late checkout requested",
             "fee_rate": "5.00",
         },
     )
@@ -459,9 +462,40 @@ def test_manual_checkin_endpoint_saves_deposit_and_payment_metadata(monkeypatch)
     assert saved.payment_method == "Card"
     assert "KELESTARIAN_PAYMENT:Card" in saved.flags
     assert "DEPOSIT_PAYMENT:Card" in saved.flags
+    assert "REMARK:Late checkout requested" in saved.flags
     assert payload["sales"][0]["deposit"] == "50.00"
     assert payload["sales"][0]["kelestarian_payment_method"] == "Card"
     assert payload["sales"][0]["deposit_payment_method"] == "Card"
+    assert payload["sales"][0]["remark"] == "Late checkout requested"
+
+
+def test_delete_manual_checkin_only_deletes_manual_folio(monkeypatch):
+    calls = []
+
+    def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
+        calls.append({"method": method, "table": table, "payload": payload, "query": query, "prefer": prefer})
+
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+    monkeypatch.setattr(hotel_app, "supabase_request", fake_supabase_request)
+
+    client = hotel_app.app.test_client()
+    response = client.post("/api/manual-checkin/delete", data={"folio_no": "MANUAL-20260626-305-123456"})
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["deleted"] is True
+    assert calls == [
+        {
+            "method": "DELETE",
+            "table": "guest_stays",
+            "payload": None,
+            "query": {"folio_no": "eq.MANUAL-20260626-305-123456"},
+            "prefer": "return=minimal",
+        }
+    ]
+
+    blocked = client.post("/api/manual-checkin/delete", data={"folio_no": "FN123"})
+    assert blocked.status_code == 400
 
 
 def test_verified_rows_batch_update_existing_folios_and_insert_new(monkeypatch):
