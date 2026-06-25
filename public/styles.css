@@ -9,15 +9,22 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   min-width: 320px;
 }
 
 .shell {
-  min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .sidebar {
@@ -27,6 +34,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 34px;
+  overflow: hidden;
 }
 
 .brand {
@@ -82,6 +90,8 @@ nav a:hover {
 }
 
 .workspace {
+  min-width: 0;
+  overflow-y: auto;
   padding: 30px;
 }
 
