@@ -100,6 +100,37 @@ def test_multi_night_rows_do_not_duplicate_collections():
     assert totals["total_kelestarian"] == "35.00"
 
 
+def test_kelestarian_rows_are_limited_to_calendar_year_2026():
+    before = stay("BEFORE", "001", "100.00", 2, date(2025, 12, 29))
+    crossing_start = stay("CROSS START", "002", "400.00", 4, date(2025, 12, 30))
+    crossing_end = stay("CROSS END", "003", "300.00", 3, date(2026, 12, 30))
+    after = stay("AFTER", "004", "100.00", 1, date(2027, 1, 1))
+
+    sales = expanded_sales([before, crossing_start, crossing_end, after], FEE)
+
+    assert [row["date"] for row in sales] == [
+        "2026-01-01",
+        "2026-01-02",
+        "2026-12-30",
+        "2026-12-31",
+    ]
+    assert sum(Decimal(row["kelestarian"].replace(",", "")) for row in sales) == Decimal("20.00")
+    assert sales[0]["kelestarian"] == "10.00"
+    assert sales[2]["kelestarian"] == "10.00"
+
+
+def test_report_selection_includes_stays_overlapping_2026_period():
+    crossing = stay("CROSS START", "002", "400.00", 4, date(2025, 12, 30))
+    before = stay("BEFORE", "001", "100.00", 2, date(2025, 12, 29))
+    after = stay("AFTER", "004", "100.00", 1, date(2027, 1, 1))
+
+    selected_b = filter_stays_for_report([crossing, before, after], "b", report_month="2026-01")
+    selected_c = filter_stays_for_report([crossing, before, after], "c", report_start="2026-01-01", report_end="2026-01-02")
+
+    assert [item.guest_name for item in selected_b] == ["CROSS START"]
+    assert [item.guest_name for item in selected_c] == ["CROSS START"]
+
+
 def test_official_reports_use_letter_pages_totals_and_readable_filenames():
     b_reader, b_text = pdf_text(form_b_pdf(scenarios(), SETTINGS, FEE))
     c_reader, c_text = pdf_text(form_c_pdf(scenarios(), SETTINGS, FEE))

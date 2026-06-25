@@ -25,6 +25,9 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 app.config["MAX_FORM_MEMORY_SIZE"] = 25 * 1024 * 1024
 
+KELESTARIAN_START = date(2026, 1, 1)
+KELESTARIAN_END = date(2026, 12, 31)
+
 
 @dataclass
 class Stay:
@@ -661,28 +664,35 @@ def expanded_sales(stays: list[Stay], fee_rate: Decimal) -> list[dict]:
     for stay in stays:
         if not stay.check_in_date or not stay.number_of_nights:
             continue
-        total_kelestarian = fee_rate * Decimal(stay.number_of_nights)
+        stay_last_night = stay.check_in_date + timedelta(days=stay.number_of_nights - 1)
+        charge_start = max(stay.check_in_date, KELESTARIAN_START)
+        charge_end = min(stay_last_night, KELESTARIAN_END)
+        if charge_start > charge_end:
+            continue
+        chargeable_nights = (charge_end - charge_start).days + 1
+        total_kelestarian = fee_rate * Decimal(chargeable_nights)
         paid_date = stay.check_in_date.strftime("%d/%m/%Y")
-        for offset in range(stay.number_of_nights):
-            day = stay.check_in_date + timedelta(days=offset)
-            is_check_in_day = offset == 0
+        for offset in range(chargeable_nights):
+            day = charge_start + timedelta(days=offset)
+            original_offset = (day - stay.check_in_date).days
+            is_charge_start_day = offset == 0
             rows.append(
                 {
                     "date": day.isoformat(),
                     "display_date": day.strftime("%d/%m/%Y"),
                     "room_no": stay.room_no,
                     "guest_name": stay.guest_name,
-                    "stay_progress": f"{offset + 1}/{stay.number_of_nights}",
-                    "nights": stay.number_of_nights,
-                    "multi_night": stay.number_of_nights > 1,
-                    "price": money(stay.amount_paid if is_check_in_day else Decimal("0")),
+                    "stay_progress": f"{original_offset + 1}/{stay.number_of_nights}",
+                    "nights": chargeable_nights,
+                    "multi_night": chargeable_nights > 1,
+                    "price": money(stay.amount_paid if is_charge_start_day else Decimal("0")),
                     "total_paid": money(stay.amount_paid),
-                    "amount_before_tax": money(stay.tariff_before_tax if is_check_in_day else Decimal("0")),
-                    "room_revenue": money(stay.tariff_before_tax if is_check_in_day else Decimal("0")),
-                    "kelestarian": money(total_kelestarian if is_check_in_day else Decimal("0")),
-                    "payment_status": "Collected" if is_check_in_day else f"Paid on {paid_date}",
-                    "paid_date": stay.check_in_date.isoformat(),
-                    "is_paid_continuation": not is_check_in_day,
+                    "amount_before_tax": money(stay.tariff_before_tax if is_charge_start_day else Decimal("0")),
+                    "room_revenue": money(stay.tariff_before_tax if is_charge_start_day else Decimal("0")),
+                    "kelestarian": money(total_kelestarian if is_charge_start_day else Decimal("0")),
+                    "payment_status": "Collected" if is_charge_start_day else f"Paid on {paid_date}",
+                    "paid_date": charge_start.isoformat(),
+                    "is_paid_continuation": not is_charge_start_day,
                     "bill_no": stay.bill_no,
                     "payment_method": stay.payment_method,
                     "rate_type": stay.rate_type,
@@ -939,12 +949,23 @@ def report_filename(kind: str, stays: list[Stay]) -> str:
     return f"Lampiran C {period}.pdf"
 
 
+def stay_overlaps_period(stay: Stay, start: date, end: date) -> bool:
+    if not stay.check_in_date or not stay.number_of_nights:
+        return False
+    stay_last_night = stay.check_in_date + timedelta(days=stay.number_of_nights - 1)
+    charge_start = max(start, KELESTARIAN_START)
+    charge_end = min(end, KELESTARIAN_END)
+    return charge_start <= charge_end and stay.check_in_date <= charge_end and stay_last_night >= charge_start
+
+
 def filter_stays_for_report(stays: list[Stay], kind: str, report_month="", report_start="", report_end="") -> list[Stay]:
     if kind == "b" and report_month:
         if not re.fullmatch(r"\d{4}-\d{2}", report_month):
             raise ValueError("Please select a valid month for Lampiran B.")
         year, month = (int(part) for part in report_month.split("-"))
-        selected = [stay for stay in stays if stay.check_in_date and stay.check_in_date.year == year and stay.check_in_date.month == month]
+        start = date(year, month, 1)
+        end = date(year, month, monthrange(year, month)[1])
+        selected = [stay for stay in stays if stay_overlaps_period(stay, start, end)]
     elif kind == "c" and (report_start or report_end):
         try:
             start = date.fromisoformat(report_start or report_end)
@@ -953,9 +974,9 @@ def filter_stays_for_report(stays: list[Stay], kind: str, report_month="", repor
             raise ValueError("Please select valid dates for Lampiran C.") from exc
         if start > end:
             raise ValueError("Lampiran C start date must be before or equal to the end date.")
-        selected = [stay for stay in stays if stay.check_in_date and start <= stay.check_in_date <= end]
+        selected = [stay for stay in stays if stay_overlaps_period(stay, start, end)]
     else:
-        selected = stays
+        selected = [stay for stay in stays if stay_overlaps_period(stay, KELESTARIAN_START, KELESTARIAN_END)]
     if not selected:
         label = "month" if kind == "b" else "date range"
         raise ValueError(f"No guest check-ins were found for the selected {label}.")
