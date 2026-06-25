@@ -481,9 +481,10 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
     existing_records = load_matching_stays_from_supabase(stays)
     incoming_rows, reviews = dedupe_import_records([stay_record(stay) for stay in stays])
     inserted = 0
+    updated = 0
     merged_duplicates = 0
     rows_to_insert = []
-    rows_to_update = []
+    row_ids_to_delete = []
     now = datetime.utcnow().isoformat() + "Z"
     existing_by_id = {row.get("id"): row for row in existing_records if row.get("id")}
     for row in incoming_rows:
@@ -493,41 +494,39 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
         row["updated_at"] = now
         matches = find_existing_matches(row, list(existing_by_id.values()))
         if not matches:
+            inserted += 1
             rows_to_insert.append(row)
             continue
-        keeper = matches[0]
-        keeper_id = keeper.get("id")
-        update_row = {**row, "id": keeper_id}
-        rows_to_update.append(update_row)
-        existing_by_id[keeper_id] = {**keeper, **update_row}
-        for duplicate in matches[1:]:
-            duplicate_id = duplicate.get("id")
-            if not duplicate_id:
+        updated += 1
+        rows_to_insert.append(row)
+        for index, matched in enumerate(matches):
+            matched_id = matched.get("id")
+            if not matched_id:
                 continue
-            reviews.append(
-                {
-                    "review_key": f"existing-duplicate-merged|{duplicate_id}",
-                    "folio_no": row.get("folio_no"),
-                    "incoming_bill_no": row.get("bill_no"),
-                    "existing_folio_no": duplicate.get("folio_no"),
-                    "existing_bill_no": duplicate.get("bill_no"),
-                    "reason": "EXISTING_DUPLICATE_MERGED",
-                    "incoming_record": row,
-                    "existing_record": duplicate,
-                    "status": "pending",
-                }
-            )
-            supabase_request("DELETE", "guest_stays", query={"id": f"eq.{duplicate_id}"}, prefer="return=minimal")
-            existing_by_id.pop(duplicate_id, None)
-            merged_duplicates += 1
-    for index in range(0, len(rows_to_update), 500):
-        chunk = rows_to_update[index : index + 500]
+            if index > 0:
+                reviews.append(
+                    {
+                        "review_key": f"existing-duplicate-merged|{matched_id}",
+                        "folio_no": row.get("folio_no"),
+                        "incoming_bill_no": row.get("bill_no"),
+                        "existing_folio_no": matched.get("folio_no"),
+                        "existing_bill_no": matched.get("bill_no"),
+                        "reason": "EXISTING_DUPLICATE_MERGED",
+                        "incoming_record": row,
+                        "existing_record": matched,
+                        "status": "pending",
+                    }
+                )
+                merged_duplicates += 1
+            row_ids_to_delete.append(matched_id)
+            existing_by_id.pop(matched_id, None)
+    for index in range(0, len(row_ids_to_delete), 100):
+        chunk = row_ids_to_delete[index : index + 100]
         supabase_request(
-            "POST",
+            "DELETE",
             "guest_stays",
-            chunk,
-            query={"on_conflict": "id"},
-            prefer="resolution=merge-duplicates,return=minimal",
+            query={"id": "in.(" + ",".join(chunk) + ")"},
+            prefer="return=minimal",
         )
     for index in range(0, len(rows_to_insert), 500):
         chunk = rows_to_insert[index : index + 500]
@@ -538,7 +537,6 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
             query={"on_conflict": "folio_no"},
             prefer="resolution=merge-duplicates,return=minimal",
         )
-        inserted += len(chunk)
     review_error = ""
     try:
         queue_review_records(reviews, batch_id, filename)
@@ -548,7 +546,7 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
         "saved": True,
         "accepted_count": len(incoming_rows),
         "inserted_count": inserted,
-        "updated_count": len(rows_to_update),
+        "updated_count": updated,
         "merged_duplicate_count": merged_duplicates,
         "review_count": len(reviews),
         "review_error": review_error,
