@@ -86,7 +86,7 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="sales-dropdown-dashboard-workspace-20260626"' in PAGE
+    assert 'APP_VERSION="manual-checkin-layout-20260626"' in PAGE
     assert '<option value="sales">Sales</option>' in PAGE
     assert '<option value="dashboard">Dashboard</option>' in PAGE
     assert '<option value="lestari">Lestari</option>' in PAGE
@@ -130,6 +130,9 @@ def test_reporting_settings_include_default_contact_details():
     assert '.metric.final' in PAGE
     assert 'background:#168244' in PAGE
     assert 'class="cashflow-transfer"' in PAGE
+    assert 'class="manual-checkin-grid"' in PAGE
+    assert 'class="manual-checkin-actions"' in PAGE
+    assert 'class="wide-field">Payment method' in PAGE
     assert 'id="manualRoom"' in PAGE
     assert 'id="manualCheckIn" class="manual" name="check_in_date" type="date"' in PAGE
     assert 'id="manualHistoryDate" type="date"' in PAGE
