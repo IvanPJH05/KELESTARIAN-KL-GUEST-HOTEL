@@ -87,8 +87,16 @@ def test_reporting_settings_include_default_contact_details():
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
     assert 'APP_VERSION="daily-sales-lestari-deposit-20260626"' in PAGE
+    assert '<option value="sales">Sales</option>' in PAGE
+    assert '<option value="lestari">Lestari</option>' in PAGE
+    assert 'data-workspace="sales" data-view="dashboard"' in PAGE
     assert 'data-view="manual">Manual Check-In' in PAGE
-    assert 'data-view="dailySales">Daily Sales' in PAGE
+    assert 'data-workspace="sales" data-view="importSales"' in PAGE
+    assert 'data-workspace="sales" data-view="dailySales"' in PAGE
+    assert 'Sales Import' in PAGE
+    assert 'data-workspace="sales" data-view="historical"' in PAGE
+    assert 'data-workspace="lestari" data-view="b"' in PAGE
+    assert 'data-workspace="lestari" data-view="c"' in PAGE
     assert 'id="workspaceSelect"' in PAGE
     assert 'class="workspace-select"' in PAGE
     assert 'id="dailyCashflow"' in PAGE
@@ -135,8 +143,9 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="reportStartC" type="date"' in PAGE
     assert 'id="reportEndC" type="date"' in PAGE
     assert 'data-view="review">Manual Review' in PAGE
-    assert PAGE.index('<section id="dashboard"') < PAGE.index('id="drop"') < PAGE.index('<section id="manual"')
-    assert 'function setWorkspace(view)' in PAGE
+    assert PAGE.index('<section id="dashboard"') < PAGE.index('<section id="importSales"') < PAGE.index('id="drop"') < PAGE.index('<section id="manual"')
+    assert 'const WORKSPACE_DEFAULT_VIEW={sales:"dashboard",lestari:"b"}' in PAGE
+    assert 'function setWorkspace(viewOrWorkspace)' in PAGE
 
 
 def test_payment_methods_are_categorised():
