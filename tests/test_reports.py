@@ -86,7 +86,7 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="sales-reports-above-ledger-20260626"' in PAGE
+    assert 'APP_VERSION="sales-report-cards-20260626"' in PAGE
     assert '<option value="sales">Sales</option>' in PAGE
     assert '<option value="dashboard">Dashboard</option>' in PAGE
     assert '<option value="lestari">Lestari</option>' in PAGE
@@ -165,6 +165,10 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="drop"' in import_section
     assert 'const WORKSPACE_DEFAULT_VIEW={sales:"importSales",dashboard:"dashboard",lestari:"b"}' in PAGE
     assert 'function setWorkspace(viewOrWorkspace)' in PAGE
+    assert '<span>Imported stays</span>' not in PAGE
+    assert '<span>Sales rows</span>' not in PAGE
+    assert '#analytics>.cards{display:none}' in PAGE
+    assert '#analytics tbody{display:grid' in PAGE
     assert 'Room payments in selected dates' in PAGE
     assert 'Lestari fees in selected dates' in PAGE
     assert 'Room payment collection by method' in PAGE
