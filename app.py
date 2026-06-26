@@ -1558,23 +1558,24 @@ textarea{width:100%;min-height:94px;border:1px solid #c9d5e3;border-radius:7px;p
     <div class="nav-label">Workspace</div>
     <select id="workspaceSelect" class="workspace-select" aria-label="Workspace">
       <option value="sales">Sales</option>
+      <option value="dashboard">Dashboard</option>
       <option value="lestari">Lestari</option>
     </select>
     <nav class="nav">
-      <button data-workspace="sales" data-view="dashboard" class="active">Dashboard</button>
+      <button data-workspace="sales" data-view="importSales" class="active">Import Data</button>
       <button data-workspace="sales" data-view="manual">Manual Check-In</button>
-      <button data-workspace="sales" data-view="importSales">Sales Import</button>
-      <button data-workspace="sales" data-view="dailySales">Daily Sales</button>
-      <button data-workspace="sales" data-view="historical">Historical</button>
-      <button data-workspace="sales" data-view="review">Manual Review</button>
-      <button data-workspace="sales" data-view="settings">Settings</button>
+      <button data-workspace="dashboard" data-view="dashboard">Dashboard</button>
+      <button data-workspace="dashboard" data-view="dailySales">Daily Sales</button>
+      <button data-workspace="dashboard" data-view="historical">Historical</button>
+      <button data-workspace="dashboard" data-view="review">Manual Review</button>
+      <button data-workspace="dashboard" data-view="settings">Settings</button>
       <button data-workspace="lestari" data-view="b">Lampiran B</button>
       <button data-workspace="lestari" data-view="c">Lampiran C</button>
     </nav>
     <div class="account"><div class="avatar">A</div><div><strong>Admin</strong><br><span style="color:#a6bddb">@admin</span></div></div>
   </aside>
   <section class="main">
-    <header class="top"><div><p class="eyebrow">Sales Tracking Workspace</p><h1 id="pageTitle">Dashboard</h1></div><div class="badge">ADMIN</div></header>
+    <header class="top"><div><p class="eyebrow">Sales Tracking Workspace</p><h1 id="pageTitle">Import Data</h1></div><div class="badge">ADMIN</div></header>
     <section class="notice" id="notice">Drag in the Sales Bill Register Excel file. The dashboard will remember every guest stay and expand multi-night bills by day.</section>
     <section class="cards">
       <article class="metric"><span>Imported stays</span><strong id="mStays">0</strong></article>
@@ -1582,12 +1583,12 @@ textarea{width:100%;min-height:94px;border:1px solid #c9d5e3;border-radius:7px;p
       <article class="metric"><span>Total sales</span><strong id="mSales">RM 0.00</strong></article>
       <article class="metric"><span>Kelestarian</span><strong id="mFee">RM 0.00</strong></article>
     </section>
-    <section id="dashboard" class="view active">
+    <section id="dashboard" class="view">
       <div class="panel"><div class="toolbar"><h2>Daily sales ledger</h2><input id="search" placeholder="Search guest or room"></div><div class="filters"><button data-range="today">Today</button><button data-range="last7">Last 7 days</button><button data-range="month" class="active">This month</button><button data-range="custom">Custom date</button><input id="startDate" type="date"><input id="endDate" type="date"></div><div id="ledger" class="empty">No imported check-ins yet.</div></div>
       <div class="panel"><h2>Sales reports</h2><br><div id="analytics" class="empty">Import Excel first.</div></div>
     </section>
-    <section id="importSales" class="view">
-      <div class="panel"><div class="toolbar"><h2>Sales Bill Register import</h2></div><label class="drop" id="drop"><span id="dropText">Choose or drop Sales Bill Register Excel<small>.xls or .xlsx</small></span><input id="file" type="file" accept=".xls,.xlsx"></label></div>
+    <section id="importSales" class="view active">
+      <div class="panel"><div class="toolbar"><h2>Import data</h2></div><label class="drop" id="drop"><span id="dropText">Choose or drop Sales Bill Register Excel<small>.xls or .xlsx</small></span><input id="file" type="file" accept=".xls,.xlsx"></label></div>
     </section>
     <section id="manual" class="view">
       <div class="panel"><div class="toolbar"><h2>Manual daily check-in</h2></div><div class="manual-row">
@@ -1659,7 +1660,7 @@ textarea{width:100%;min-height:94px;border:1px solid #c9d5e3;border-radius:7px;p
   </section>
 </main>
 <script>
-const APP_VERSION="daily-sales-lestari-deposit-20260626";
+const APP_VERSION="sales-dropdown-dashboard-workspace-20260626";
 if(localStorage.getItem("appVersion")!==APP_VERSION){["stays","sales","summary"].forEach(k=>localStorage.removeItem(k));localStorage.setItem("appVersion",APP_VERSION)}
 let stays=JSON.parse(localStorage.getItem("stays")||"[]");
 let sales=JSON.parse(localStorage.getItem("sales")||"[]");
@@ -1732,7 +1733,7 @@ async function loadHistory(bounds=null){let params=new URLSearchParams({fee_rate
 async function loadHistorical(){let year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025";q("#historicalPanel").className='empty';q("#historicalPanel").innerHTML='Loading '+year+' historical data...';let url='/api/historical?fee_rate='+(settings().fee_rate||'5.00')+'&year='+encodeURIComponent(year);let res=await fetch(url);let data=await res.json();if(!res.ok||!data.enabled){q("#historicalPanel").innerHTML=data.error||'Historical data is not available.';return}renderHistorical(data)}
 async function loadReviewQueue(){let res=await fetch('/api/review-queue'),data=await res.json();reviewQueue=res.ok&&data.enabled?(data.records||[]):[];renderReviewQueue()}
 async function download(kind){let fd=new FormData();fd.append('kind',kind);fd.append('stays',JSON.stringify(stays));if(kind==='b'){let month=q("#reportMonthB").value;if(!month){q("#notice").textContent='Select a month for Lampiran B.';return}fd.append('report_month',month)}else{let month=q("#reportMonthC").value;if(month){syncReportMonthC();fd.append('report_month',month)}let start=q("#reportStartC").value,end=q("#reportEndC").value;if(!month&&(!start||!end)){q("#notice").textContent='Select a month or date range for Lampiran C.';return}if(start&&end&&start>end){q("#notice").textContent='Lampiran C first date must not be after the last date.';return}if(!month){fd.append('report_start',start);fd.append('report_end',end)}}Object.entries(settings()).forEach(([k,v])=>fd.append(k,v));let res=await fetch('/api/report',{method:'POST',body:fd});if(!res.ok){q("#notice").textContent=await res.text();return}let blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a'),disposition=res.headers.get('Content-Disposition')||'',match=disposition.match(/filename="?([^";]+)"?/i);a.href=url;a.download=match?match[1]:(kind==='b'?'Lampiran B.pdf':'Lampiran C.pdf');a.click();URL.revokeObjectURL(url)}
-const WORKSPACE_DEFAULT_VIEW={sales:"dashboard",lestari:"b"};
+const WORKSPACE_DEFAULT_VIEW={sales:"importSales",dashboard:"dashboard",lestari:"b"};
 function viewWorkspace(view){let btn=q(`.nav button[data-view="${view}"]`);return btn?btn.dataset.workspace:"sales"}
 function setWorkspace(viewOrWorkspace){let workspace=WORKSPACE_DEFAULT_VIEW[viewOrWorkspace]?viewOrWorkspace:viewWorkspace(viewOrWorkspace),view=WORKSPACE_DEFAULT_VIEW[viewOrWorkspace]||viewOrWorkspace,button=q(`.nav button[data-view="${view}"]`)||q(`.nav button[data-workspace="${workspace}"]`);if(!button)return;workspace=button.dataset.workspace;view=button.dataset.view;qa(".nav button").forEach(x=>{let visible=x.dataset.workspace===workspace;x.style.display=visible?"block":"none";x.classList.toggle('active',visible&&x.dataset.view===view)});qa(".view").forEach(v=>v.classList.remove('active'));q("#"+view).classList.add('active');q("#pageTitle").textContent=button.textContent;q("#workspaceSelect").value=workspace}
 qa(".nav button").forEach(b=>b.onclick=()=>setWorkspace(b.dataset.view));
