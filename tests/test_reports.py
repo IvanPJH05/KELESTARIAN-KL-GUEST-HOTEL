@@ -107,8 +107,11 @@ def test_reporting_settings_include_default_contact_details():
     assert 'Transfer in/out' not in PAGE
     assert 'Final on hand' in PAGE
     assert 'id="ownerFilter"' in PAGE
+    assert 'id="ownerSelect"' in PAGE
+    assert 'value="__new__">+ Add new owner' in PAGE
     assert 'View owner' in PAGE
-    assert 'ownerNameList' in PAGE
+    assert 'selectedOwnerName' in PAGE
+    assert 'No owner equity or drawings history yet.' in PAGE
     assert 'class="final-row"' in PAGE
     assert '.metric.final' in PAGE
     assert 'background:#168244' in PAGE
