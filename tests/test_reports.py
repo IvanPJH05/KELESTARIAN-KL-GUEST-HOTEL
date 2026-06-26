@@ -106,7 +106,10 @@ def test_reporting_settings_include_default_contact_details():
     assert 'Room payment' in PAGE
     assert 'Transfer in/out' in PAGE
     assert 'Final on hand' in PAGE
+    assert 'class="final-row"' in PAGE
     assert '.metric.final' in PAGE
+    assert 'background:#168244' in PAGE
+    assert 'class="cashflow-transfer"' in PAGE
     assert 'id="manualRoom"' in PAGE
     assert 'Twin room rate (RM)' in PAGE
     assert 'Family room rate (RM)' in PAGE
