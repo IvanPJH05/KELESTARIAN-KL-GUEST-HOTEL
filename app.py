@@ -1584,8 +1584,8 @@ textarea{width:100%;min-height:94px;border:1px solid #c9d5e3;border-radius:7px;p
       <article class="metric"><span>Kelestarian</span><strong id="mFee">RM 0.00</strong></article>
     </section>
     <section id="dashboard" class="view">
-      <div class="panel"><div class="toolbar"><h2>Daily sales ledger</h2><input id="search" placeholder="Search guest or room"></div><div class="filters"><button data-range="today">Today</button><button data-range="last7">Last 7 days</button><button data-range="month" class="active">This month</button><button data-range="custom">Custom date</button><input id="startDate" type="date"><input id="endDate" type="date"></div><div id="ledger" class="empty">No imported check-ins yet.</div></div>
       <div class="panel"><h2>Sales reports</h2><br><div id="analytics" class="empty">Import Excel first.</div></div>
+      <div class="panel"><div class="toolbar"><h2>Daily sales ledger</h2><input id="search" placeholder="Search guest or room"></div><div class="filters"><button data-range="today">Today</button><button data-range="last7">Last 7 days</button><button data-range="month" class="active">This month</button><button data-range="custom">Custom date</button><input id="startDate" type="date"><input id="endDate" type="date"></div><div id="ledger" class="empty">No imported check-ins yet.</div></div>
     </section>
     <section id="importSales" class="view active">
       <div class="panel"><div class="toolbar"><h2>Import data</h2></div><label class="drop" id="drop"><span id="dropText">Choose or drop Sales Bill Register Excel<small>.xls or .xlsx</small></span><input id="file" type="file" accept=".xls,.xlsx"></label></div>
@@ -1660,7 +1660,7 @@ textarea{width:100%;min-height:94px;border:1px solid #c9d5e3;border-radius:7px;p
   </section>
 </main>
 <script>
-const APP_VERSION="precise-dashboard-labels-20260626";
+const APP_VERSION="sales-reports-above-ledger-20260626";
 if(localStorage.getItem("appVersion")!==APP_VERSION){["stays","sales","summary"].forEach(k=>localStorage.removeItem(k));localStorage.setItem("appVersion",APP_VERSION)}
 let stays=JSON.parse(localStorage.getItem("stays")||"[]");
 let sales=JSON.parse(localStorage.getItem("sales")||"[]");

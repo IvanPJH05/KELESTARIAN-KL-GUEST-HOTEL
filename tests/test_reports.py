@@ -86,7 +86,7 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="precise-dashboard-labels-20260626"' in PAGE
+    assert 'APP_VERSION="sales-reports-above-ledger-20260626"' in PAGE
     assert '<option value="sales">Sales</option>' in PAGE
     assert '<option value="dashboard">Dashboard</option>' in PAGE
     assert '<option value="lestari">Lestari</option>' in PAGE
@@ -175,6 +175,8 @@ def test_reporting_settings_include_default_contact_details():
     assert 'K Pay' not in PAGE
     assert 'Collected in range' not in PAGE
     assert 'Kelestarian in range' not in PAGE
+    dashboard_section = PAGE.split('<section id="dashboard"', 1)[1].split('<section id="importSales"', 1)[0]
+    assert dashboard_section.index("Sales reports") < dashboard_section.index("Daily sales ledger")
 
 
 def test_payment_methods_are_categorised():
