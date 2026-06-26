@@ -386,6 +386,21 @@ def manual_import_match_key(record: dict) -> tuple[str, str]:
     return (clean(record.get("room_no")), clean(record.get("check_in_date")))
 
 
+def manual_import_mismatch_reasons(manual: dict, incoming: dict) -> list[str]:
+    reasons = []
+    if clean(manual.get("room_no")) != clean(incoming.get("room_no")):
+        reasons.append("ROOM")
+    if clean(manual.get("check_in_date")) != clean(incoming.get("check_in_date")):
+        reasons.append("CHECK_IN_DATE")
+    manual_nights = int(dec(manual.get("number_of_nights")))
+    incoming_nights = int(dec(incoming.get("number_of_nights")))
+    if manual_nights != incoming_nights:
+        reasons.append("NIGHTS")
+    if abs(dec(manual.get("amount_paid")) - dec(incoming.get("amount_paid"))) > Decimal("0.01"):
+        reasons.append("AMOUNT")
+    return reasons
+
+
 def is_manual_record(record: dict) -> bool:
     return "MANUAL_CHECK_IN" in (record.get("flags") or []) or verification_value(record.get("folio_no")).startswith("MANUAL-")
 
@@ -583,6 +598,22 @@ def save_import_to_supabase(filename: str, stays: list[Stay], sales: list[dict],
         row["updated_at"] = now
         manual_match = manual_by_room_date.get(manual_import_match_key(row))
         if manual_match and manual_match.get("id"):
+            mismatch_reasons = manual_import_mismatch_reasons(manual_match, row)
+            if mismatch_reasons:
+                reviews.append(
+                    {
+                        "review_key": f"manual-import-mismatch|{manual_match.get('id')}|{row.get('folio_no') or row.get('bill_no')}",
+                        "folio_no": row.get("folio_no"),
+                        "incoming_bill_no": row.get("bill_no"),
+                        "existing_folio_no": manual_match.get("folio_no"),
+                        "existing_bill_no": manual_match.get("bill_no"),
+                        "reason": "MANUAL_IMPORT_MISMATCH:" + ",".join(mismatch_reasons),
+                        "incoming_record": row,
+                        "existing_record": manual_match,
+                        "status": "pending",
+                    }
+                )
+                continue
             manual_matched += 1
             updated += 1
             rows_to_insert.append(merge_import_into_manual_record(manual_match, row, batch_id, now))
