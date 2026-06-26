@@ -93,12 +93,16 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="dailySalesTable"' in PAGE
     assert 'id="ownerMovements"' in PAGE
     assert 'id="saveOwnerMovement"' in PAGE
+    assert 'id="transferMovements"' in PAGE
+    assert 'id="saveTransferMovement"' in PAGE
     assert 'data-daily-range="today"' in PAGE
     assert 'data-daily-range="custom"' in PAGE
     assert 'Cash / QR / Bank on hand' in PAGE
     assert 'Owner equity and drawings' in PAGE
+    assert 'Transfer between Cash / QR / Bank' in PAGE
     assert 'Live check-ins' in PAGE
     assert 'Room payment' in PAGE
+    assert 'Transfers net' in PAGE
     assert 'Final on hand' in PAGE
     assert 'id="manualRoom"' in PAGE
     assert 'Twin room rate (RM)' in PAGE
