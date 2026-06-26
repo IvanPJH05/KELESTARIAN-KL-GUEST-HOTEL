@@ -125,6 +125,10 @@ def test_reporting_settings_include_default_contact_details():
     assert 'background:#168244' in PAGE
     assert 'class="cashflow-transfer"' in PAGE
     assert 'id="manualRoom"' in PAGE
+    assert 'id="manualCheckIn" class="manual" name="check_in_date" type="date"' in PAGE
+    assert 'id="manualHistoryDate" type="date"' in PAGE
+    assert 'History date' in PAGE
+    assert 'q("#manualHistoryDate").value=checkIn' in PAGE
     assert 'Twin room rate (RM)' in PAGE
     assert 'Family room rate (RM)' in PAGE
     assert 'Family suite rate (RM)' in PAGE
