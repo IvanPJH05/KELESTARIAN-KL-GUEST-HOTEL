@@ -538,7 +538,7 @@ def test_sales_bill_import_matches_manual_room_date_without_moving_money(monkeyp
             "payment_method": "QR",
         }
     )
-    incoming = stay("REAL GUEST", "305", "250.00", 1, date(2026, 6, 26), folio_no="FN900", bill_no="BN900")
+    incoming = stay("REAL GUEST", "305", "108.00", 1, date(2026, 6, 26), folio_no="FN900", bill_no="BN900")
 
     def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
         calls.append({"method": method, "table": table, "payload": payload, "query": query, "prefer": prefer})
@@ -564,6 +564,40 @@ def test_sales_bill_import_matches_manual_room_date_without_moving_money(monkeyp
     assert saved["total_amount"] == 108.0
     assert saved["payment_method"] == "QR"
     assert "IMPORT_FOLIO:FN900" in saved["flags"]
+
+
+def test_sales_bill_import_sends_manual_amount_mismatch_to_review(monkeypatch):
+    calls = []
+    manual = stay_record(stay("Walk-in guest", "305", "108.00", 1, date(2026, 6, 26), folio_no="MANUAL-20260626-305-123456", bill_no="MANUAL-BILL"))
+    manual.update(
+        {
+            "id": "manual-row",
+            "flags": ["MANUAL_CHECK_IN", "DEPOSIT:50.00", "DEPOSIT_PAYMENT:Cash", "KELESTARIAN_PAYMENT:Cash"],
+            "payment_method": "QR",
+        }
+    )
+    incoming = stay("REAL GUEST", "305", "250.00", 1, date(2026, 6, 26), folio_no="FN900", bill_no="BN900")
+
+    def fake_supabase_request(method, table, payload=None, query=None, prefer=None):
+        calls.append({"method": method, "table": table, "payload": payload, "query": query, "prefer": prefer})
+        if table == "hotel_import_batches":
+            return [{"id": "batch-row"}]
+        return None
+
+    monkeypatch.setattr(hotel_app, "supabase_configured", lambda: True)
+    monkeypatch.setattr(hotel_app, "supabase_request", fake_supabase_request)
+    monkeypatch.setattr(hotel_app, "load_matching_stays_from_supabase", lambda stays: [])
+    monkeypatch.setattr(hotel_app, "load_stays_by_checkin_range_from_supabase", lambda start, end: [manual])
+
+    result = hotel_app.save_import_to_supabase("Sales Bill Register_20260626.xls", [incoming], [], summary([incoming], FEE))
+    guest_upserts = [call for call in calls if call["table"] == "guest_stays"]
+    review_upserts = [call for call in calls if call["table"] == "guest_stay_review_queue"]
+
+    assert result["manual_matched_count"] == 0
+    assert result["inserted_count"] == 0
+    assert result["review_count"] == 1
+    assert guest_upserts == []
+    assert review_upserts[0]["payload"][0]["reason"] == "MANUAL_IMPORT_MISMATCH:AMOUNT"
 
 
 def test_verified_rows_batch_update_existing_folios_and_insert_new(monkeypatch):
