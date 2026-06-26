@@ -86,7 +86,7 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="sales-report-cards-20260626"' in PAGE
+    assert 'APP_VERSION="payment-source-dashboard-20260626"' in PAGE
     assert '<option value="sales">Sales</option>' in PAGE
     assert '<option value="dashboard">Dashboard</option>' in PAGE
     assert '<option value="lestari">Lestari</option>' in PAGE
@@ -172,6 +172,10 @@ def test_reporting_settings_include_default_contact_details():
     assert 'Room payments in selected dates' in PAGE
     assert 'Lestari fees in selected dates' in PAGE
     assert 'Room payment collection by method' in PAGE
+    assert 'Revenue by booking/source type' in PAGE
+    assert 'function moneyBucket(method,source)' in PAGE
+    assert 'function bookingSource(value)' in PAGE
+    assert '["BKING","OTA","TRIP","XPDIA"].includes(src)' in PAGE
     assert 'Room Payment Collected' in PAGE
     assert 'Lestari Payment Method' in PAGE
     assert 'Deposit Payment Method' in PAGE
@@ -184,10 +188,11 @@ def test_reporting_settings_include_default_contact_details():
 
 
 def test_payment_methods_are_categorised():
-    assert normalize_payment_method("Visa Debit Card") == "Card"
-    assert normalize_payment_method("Master Card") == "Card"
-    assert normalize_payment_method("ATM Card") == "Bank / ATM"
-    assert normalize_payment_method("Online Booking") == "Online Booking"
+    assert normalize_payment_method("Visa Debit Card") == "Bank"
+    assert normalize_payment_method("Master Card") == "Bank"
+    assert normalize_payment_method("ATM Card") == "Bank"
+    assert normalize_payment_method("Online Booking") == "Bank"
+    assert normalize_payment_method("QR") == "QR Payment"
     assert normalize_payment_method("Security Deposit") == "Security Deposit"
 
 
