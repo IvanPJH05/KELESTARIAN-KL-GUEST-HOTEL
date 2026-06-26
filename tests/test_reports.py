@@ -104,8 +104,11 @@ def test_reporting_settings_include_default_contact_details():
     assert 'Transfer between Cash / QR / Bank' in PAGE
     assert 'Live check-ins' in PAGE
     assert 'Room payment' in PAGE
-    assert 'Transfer in/out' in PAGE
+    assert 'Transfer in/out' not in PAGE
     assert 'Final on hand' in PAGE
+    assert 'id="ownerFilter"' in PAGE
+    assert 'View owner' in PAGE
+    assert 'ownerNameList' in PAGE
     assert 'class="final-row"' in PAGE
     assert '.metric.final' in PAGE
     assert 'background:#168244' in PAGE
