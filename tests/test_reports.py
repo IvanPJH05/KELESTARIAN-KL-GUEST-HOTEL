@@ -86,7 +86,7 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="historicalYear"></select>' in PAGE
     assert "All years" not in PAGE
     assert 'year=q("#historicalYear").value||localStorage.getItem("historicalYear")||"2025"' in PAGE
-    assert 'APP_VERSION="manual-checkin-layout-20260626"' in PAGE
+    assert 'APP_VERSION="lampiran-date-controls-20260626"' in PAGE
     assert '<option value="sales">Sales</option>' in PAGE
     assert '<option value="dashboard">Dashboard</option>' in PAGE
     assert '<option value="lestari">Lestari</option>' in PAGE
@@ -155,6 +155,11 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="reportMonthC" type="month"' in PAGE
     assert 'id="reportStartC" type="date"' in PAGE
     assert 'id="reportEndC" type="date"' in PAGE
+    assert 'q("#reportMonthB").value=localStorage.getItem("reportMonthB")||""' in PAGE
+    assert 'q("#reportMonthC").value=localStorage.getItem("reportMonthC")||""' in PAGE
+    assert 'q("#reportStartC").value=localStorage.getItem("reportStartC")||""' in PAGE
+    assert 'q("#reportEndC").value=localStorage.getItem("reportEndC")||""' in PAGE
+    assert 'if(!q("#reportMonthB").value)q("#reportMonthB").value=savedB||latestMonth' in PAGE
     assert 'data-view="review">Manual Review' in PAGE
     import_section = PAGE.split('<section id="importSales"', 1)[1].split('<section id="manual"', 1)[0]
     assert 'id="drop"' in import_section
