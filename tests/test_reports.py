@@ -89,13 +89,17 @@ def test_reporting_settings_include_default_contact_details():
     assert 'APP_VERSION="daily-sales-lestari-deposit-20260626"' in PAGE
     assert 'data-view="manual">Manual Check-In' in PAGE
     assert 'data-view="dailySales">Daily Sales' in PAGE
-    assert 'id="lestariDeposit"' in PAGE
+    assert 'id="dailyCashflow"' in PAGE
     assert 'id="dailySalesTable"' in PAGE
+    assert 'id="ownerMovements"' in PAGE
+    assert 'id="saveOwnerMovement"' in PAGE
     assert 'data-daily-range="today"' in PAGE
     assert 'data-daily-range="custom"' in PAGE
-    assert 'Lestari and Deposit' in PAGE
-    assert 'Total Bank Transfer' in PAGE
-    assert 'Cash Deposit' in PAGE
+    assert 'Cash / QR / Bank on hand' in PAGE
+    assert 'Owner equity and drawings' in PAGE
+    assert 'Live check-ins' in PAGE
+    assert 'Room payment' in PAGE
+    assert 'Final on hand' in PAGE
     assert 'id="manualRoom"' in PAGE
     assert 'Twin room rate (RM)' in PAGE
     assert 'Family room rate (RM)' in PAGE
