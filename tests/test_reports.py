@@ -89,6 +89,8 @@ def test_reporting_settings_include_default_contact_details():
     assert 'APP_VERSION="daily-sales-lestari-deposit-20260626"' in PAGE
     assert 'data-view="manual">Manual Check-In' in PAGE
     assert 'data-view="dailySales">Daily Sales' in PAGE
+    assert 'id="workspaceSelect"' in PAGE
+    assert 'class="workspace-select"' in PAGE
     assert 'id="dailyCashflow"' in PAGE
     assert 'id="dailySalesTable"' in PAGE
     assert 'id="ownerMovements"' in PAGE
@@ -123,6 +125,8 @@ def test_reporting_settings_include_default_contact_details():
     assert 'id="reportStartC" type="date"' in PAGE
     assert 'id="reportEndC" type="date"' in PAGE
     assert 'data-view="review">Manual Review' in PAGE
+    assert PAGE.index('<section id="dashboard"') < PAGE.index('id="drop"') < PAGE.index('<section id="manual"')
+    assert 'function setWorkspace(view)' in PAGE
 
 
 def test_payment_methods_are_categorised():
